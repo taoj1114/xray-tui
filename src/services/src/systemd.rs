@@ -20,6 +20,10 @@ impl SystemdService {
         }
     }
 
+    pub fn unit_path(&self) -> &str {
+        &self.unit_file_path
+    }
+
     pub fn get_status(&self) -> Result<XrayStatus, ServiceError> {
         let output = duct::cmd!("systemctl", "is-active", &self.unit_name)
             .stdout_capture()

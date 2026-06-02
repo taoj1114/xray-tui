@@ -135,14 +135,12 @@ impl XrayService {
     }
 
     /// Uninstall Xray — stop service, remove binary, config, and systemd unit
-    pub fn uninstall_xray(&self) -> Result<(), ServiceError> {
+    pub fn uninstall_xray(&self, unit_file: &str) -> Result<(), ServiceError> {
         let binary = &self.settings.xray_binary_path;
         let config = &self.settings.config_path;
-        // Stop & disable systemd unit first
         let _ = std::process::Command::new("sudo").args(["systemctl", "stop", "xray"]).output();
         let _ = std::process::Command::new("sudo").args(["systemctl", "disable", "xray"]).output();
-        // Remove unit file
-        let _ = std::process::Command::new("sudo").args(["rm", "-f", "/etc/systemd/system/xray.service"]).output();
+        let _ = std::process::Command::new("sudo").args(["rm", "-f", unit_file]).output();
         let _ = std::process::Command::new("sudo").args(["systemctl", "daemon-reload"]).output();
         // Remove binary
         let _ = std::process::Command::new("sudo").args(["rm", "-f", binary]).output();

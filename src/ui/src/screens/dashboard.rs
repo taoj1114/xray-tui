@@ -50,7 +50,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
             status.cpu_percent.unwrap_or(0.0),
             status.memory_bytes.map(|b| b / 1048576).unwrap_or(0),
             status.uptime_seconds.map(|s| s / 60).unwrap_or(0))),
-        Line::from(format!("Inbounds: {}  │  Rules: {}  │  Certs: {}", app.inbounds.len(), app.routing_rules.len(), app.certificates.len())),
+        Line::from(format!("Inbounds: {}  │  Certs: {}", app.inbounds.len(), app.certificates.len())),
     ];
     if !status.is_installed {
         lines.push(Line::from(""));

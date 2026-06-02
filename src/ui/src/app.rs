@@ -7,7 +7,7 @@ use xray_services::*;
 use xray_services::config_manager::ConfigEntry;
 
 use crate::screens;
-use crate::screens::{InboundWizardState, LogViewerState, RoutingEditMode, UserEditMode, SettingsEditState};
+use crate::screens::{InboundWizardState, LogViewerState, UserEditMode, SettingsEditState};
 
 #[derive(Debug, Clone)]
 pub enum PickerAction {
@@ -24,13 +24,13 @@ pub enum Screen {
     InboundList,
     InboundWizard(InboundWizardState),
     UserManager { inbound_idx: usize, selected: usize, editing: Option<UserEditMode> },
-    RoutingEditor { selected: usize, editing: Option<RoutingEditMode> },
     SslManagement { selected: usize, editing: Option<screens::ssl_manager::SslEditState> },
     LogViewer(LogViewerState),
     Settings(Option<SettingsEditState>),
     ConfirmDialog { message: String, on_confirm: ConfirmedAction },
     ConfigPicker { selected: usize, action: PickerAction },
     ShareExport { content: String },
+    Others,
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +52,7 @@ pub enum Action {
     Navigate(Screen), PushScreen(Screen), PopScreen,
     SaveInbound(InboundConfig), UpdateInbound(usize, InboundConfig),
     DeleteInbound(usize), AddUser(usize, UserData), DeleteUser(usize, usize),
-    SaveRouting(Vec<RoutingRule>), RestartXray, StartXray, StopXray,
+    RestartXray, StartXray, StopXray,
     InstallXray, UninstallXray, InstallSystemd,
     ExportSubscription, UpdateSettings(GlobalSettings), ShowMessage(String),
     IssueCertWithMethod { domain: String, method: String, webroot: Option<String>, cf_email: Option<String>, cf_key: Option<String> },
@@ -60,6 +60,9 @@ pub enum Action {
     SaveUser { inbound_idx: usize, user_idx: usize, proto: String, labels: Vec<String>, values: Vec<String>, is_new: bool },
     GenerateRealityKeys,
     RefreshInbounds,
+    GenerateDemo,
+    EnableBBR, DisableBBR, CheckBBR,
+    UpdateGeoFiles, SyncNTP, CheckNTP,
     Quit,
 }
 
@@ -143,8 +146,32 @@ impl App {
             match result {
                 TaskResult::Message(m) => self.show_msg(&m),
                 TaskResult::CertIssued(c) => {
-                    self.certificates.push(c);
-                    self.show_msg("Certificate issued successfully");
+                    self.certificates.push(c.clone());
+                    // Auto-update inbound configs that use TLS for this domain
+                    let mut changed = false;
+                    for entry in &mut self.inbounds {
+                        if let Some(ref tls) = &entry.config.stream_settings.tls_settings {
+                            if tls.server_name.as_deref() == Some(&c.domain) {
+                                entry.config.stream_settings.tls_settings = Some(TlsSettings {
+                                    server_name: tls.server_name.clone(),
+                                    certificates: vec![TlsCertificate {
+                                        certificate_file: c.cert_path.clone(),
+                                        key_file: c.key_path.clone(),
+                                    }],
+                                    alpn: tls.alpn.clone(),
+                                    min_version: tls.min_version.clone(),
+                                });
+                                let _ = self.config_manager.save_inbound(&entry.config, entry.enabled);
+                                changed = true;
+                            }
+                        }
+                    }
+                    if changed {
+                        self.inbounds = self.config_manager.load_configs().unwrap_or_default();
+                        self.write_config();
+                    }
+                    let _ = self.storage.save_state(&self.settings, &self.certificates);
+                    self.show_msg("Certificate issued + saved");
                 }
                 TaskResult::Error(e) => self.show_msg(&format!("Error: {}", e)),
                 TaskResult::Success => self.show_msg("Success"),
@@ -219,8 +246,9 @@ impl App {
 
     fn switch_tab(&mut self, reverse: bool) {
         let current = match &self.current_screen {
-            Screen::Dashboard => 0, Screen::InboundList => 1, Screen::RoutingEditor { .. } => 2,
-            Screen::SslManagement { .. } => 3, Screen::LogViewer(_) => 4, Screen::Settings(_) => 5,
+            Screen::Dashboard => 0, Screen::InboundList => 1,
+            Screen::SslManagement { .. } => 2, Screen::LogViewer(_) => 3,
+            Screen::Settings(_) => 4, Screen::Others => 5,
             _ => return,
         };
         let next = if reverse { (current + 5) % 6 } else { (current + 1) % 6 };
@@ -229,9 +257,9 @@ impl App {
         self.command_cursor = 0;
         self.current_screen = match next {
             0 => Screen::Dashboard, 1 => Screen::InboundList,
-            2 => Screen::RoutingEditor { selected: 0, editing: None },
-            3 => Screen::SslManagement { selected: 0, editing: None },
-            4 => Screen::LogViewer(LogViewerState::default()), 5 => Screen::Settings(None),
+            2 => Screen::SslManagement { selected: 0, editing: None },
+            3 => Screen::LogViewer(LogViewerState::default()), 4 => Screen::Settings(None),
+            5 => Screen::Others,
             _ => Screen::Dashboard,
         };
     }
@@ -323,7 +351,6 @@ impl App {
                 if edit.is_some() { *editing = edit; }
                 result
             }
-            Screen::RoutingEditor { selected, editing } => screens::routing_editor::handle_key(key, self, selected, editing),
             Screen::SslManagement { selected, editing } => {
                 let mut edit = editing.take();
                 let result = screens::ssl_manager::handle_key(key, self, selected, &mut edit);
@@ -337,6 +364,7 @@ impl App {
                 if edit.is_some() { *editing = edit; }
                 result
             }
+            Screen::Others => screens::others::handle_key(key, self),
             _ => None,
         };
         self.current_screen = screen;
@@ -430,28 +458,34 @@ impl App {
                     let _ = self.config_manager.save_inbound(&entry.config, entry.enabled);
                 }
             }
-            Action::SaveRouting(rules) => {
-                self.routing_rules = rules; self.write_config(); self.show_msg("Saved");
-                self.current_screen = Screen::RoutingEditor { selected: 0, editing: None };
-            }
             Action::RestartXray => { let _ = self.systemd_service.restart(); self.refresh_status(); self.show_msg("Restarted"); }
             Action::StartXray => { let _ = self.systemd_service.start(); self.refresh_status(); self.show_msg("Started"); }
             Action::StopXray => { let _ = self.systemd_service.stop(); self.refresh_status(); self.show_msg("Stopped"); }
             Action::InstallXray => {
                 self.is_busy = true; self.busy_msg = "Installing Xray...".into();
-                let svc = self.xray_service.clone(); let tx = self.task_sender.clone();
+                let svc = self.xray_service.clone();
+                let sysd = self.systemd_service.clone();
+                let tx = self.task_sender.clone();
                 std::thread::spawn(move || {
                     match svc.install_xray() {
-                        Ok(_) => { let _ = tx.send(TaskResult::Message("Xray installed".into())); }
+                        Ok(_) => {
+                            // Auto-generate systemd unit with correct binary/config paths
+                            match sysd.install_unit_file() {
+                                Ok(_) => { let _ = tx.send(TaskResult::Message("Xray installed + systemd unit created".into())); }
+                                Err(e) => { let _ = tx.send(TaskResult::Message(format!("Xray installed but systemd unit failed: {}", e))); }
+                            }
+                        }
                         Err(e) => { let _ = tx.send(TaskResult::Error(format!("Install failed: {}", e))); }
                     }
                 });
             }
             Action::UninstallXray => {
                 self.is_busy = true; self.busy_msg = "Uninstalling Xray...".into();
-                let svc = self.xray_service.clone(); let tx = self.task_sender.clone();
+                let svc = self.xray_service.clone();
+                let sysd = self.systemd_service.clone();
+                let tx = self.task_sender.clone();
                 std::thread::spawn(move || {
-                    match svc.uninstall_xray() {
+                    match svc.uninstall_xray(sysd.unit_path()) {
                         Ok(_) => { let _ = tx.send(TaskResult::Message("Xray uninstalled".into())); }
                         Err(e) => { let _ = tx.send(TaskResult::Error(format!("Uninstall failed: {}", e))); }
                     }
@@ -518,7 +552,38 @@ impl App {
                 });
             }
             Action::UpdateSettings(s) => { self.settings = s; self.show_msg("Saved"); }
+            Action::GenerateDemo => {
+                self.show_msg("not implemented");
+            }
             Action::ShowMessage(msg) => self.show_msg(&msg),
+            Action::EnableBBR => {
+                let msg = run_script("modprobe tcp_bbr && sysctl -w net.core.default_qdisc=fq && sysctl -w net.ipv4.tcp_congestion_control=bbr && echo 'net.core.default_qdisc=fq' >> /etc/sysctl.conf && echo 'net.ipv4.tcp_congestion_control=bbr' >> /etc/sysctl.conf");
+                self.show_msg(&msg);
+            }
+            Action::DisableBBR => {
+                let msg = run_script("sysctl -w net.ipv4.tcp_congestion_control=cubic && sysctl -w net.core.default_qdisc=fq_codel && sed -i '/tcp_congestion_control=/d;/default_qdisc=/d' /etc/sysctl.conf");
+                self.show_msg(&msg);
+            }
+            Action::CheckBBR => {
+                let msg = run_script("echo 'Congestion:'; sysctl net.ipv4.tcp_congestion_control; echo 'Qdisc:'; sysctl net.core.default_qdisc; echo 'Modules:'; lsmod | grep bbr");
+                self.show_msg(&msg);
+            }
+            Action::UpdateGeoFiles => {
+                self.is_busy = true; self.busy_msg = "Updating geo files...".into();
+                let tx = self.task_sender.clone();
+                std::thread::spawn(move || {
+                    let result = run_script_default("curl -sL -o /usr/local/share/xray/geoip.dat https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat && curl -sL -o /usr/local/share/xray/geosite.dat https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat && echo 'Geo files updated' || echo 'FAILED'");
+                    let _ = tx.send(TaskResult::Message(result));
+                });
+            }
+            Action::SyncNTP => {
+                let msg = run_script("ntpdate -s ntp.aliyun.com 2>/dev/null || chronyd -q 'server ntp.aliyun.com iburst' 2>/dev/null || timedatectl set-ntp true 2>/dev/null && echo 'NTP synced' || echo 'NTP sync failed'");
+                self.show_msg(&msg);
+            }
+            Action::CheckNTP => {
+                let msg = run_script("timedatectl show-timesync --property=NTPSynchronized 2>/dev/null || chronyc tracking 2>/dev/null || echo 'check timedatectl status'");
+                self.show_msg(&msg);
+            }
             Action::Quit => self.should_quit = true,
         }
     }
@@ -560,5 +625,26 @@ impl App {
     pub fn refresh_status(&mut self) { if let Ok(s) = self.systemd_service.get_status() { self.xray_status = s; } }
     pub fn save_and_quit(&self) { if let Err(e) = self.storage.save_state(&self.settings, &self.certificates) { eprintln!("Failed to save state: {}", e); } }
     fn detect_port_conflict(&self, inbound: &InboundConfig, skip_idx: Option<usize>) -> bool { self.inbounds.iter().enumerate().any(|(i, e)| { if skip_idx == Some(i) { return false; } e.config.port == inbound.port && e.config.listen == inbound.listen }) }
+}
+
+fn run_script(cmd: &str) -> String {
+    use std::process::Command;
+    let output = Command::new("sudo").args(["bash", "-c", cmd]).output();
+    match output {
+        Ok(o) => {
+            let stdout = String::from_utf8_lossy(&o.stdout);
+            let trimmed = stdout.trim();
+            if trimmed.is_empty() && !o.status.success() {
+                String::from_utf8_lossy(&o.stderr).trim().to_string()
+            } else {
+                trimmed.to_string()
+            }
+        }
+        Err(e) => format!("script error: {}", e),
+    }
+}
+
+fn run_script_default(cmd: &str) -> String {
+    run_script(cmd).trim().lines().last().unwrap_or("done").to_string()
 }
 
