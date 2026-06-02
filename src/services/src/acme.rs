@@ -7,11 +7,97 @@ pub struct AcmeService;
 
 impl AcmeService {
     pub fn is_installed() -> bool {
-        Command::new("which").arg("acme.sh").output().is_ok()
+        let path = Self::find_acme_sh();
+        if path == "acme.sh" {
+            // fallback check via which
+            Command::new("which").arg("acme.sh").output().map(|o| o.status.success()).unwrap_or(false)
+        } else {
+            std::path::Path::new(&path).exists()
+        }
+    }
+
+    /// Auto-install acme.sh via the official installer script, and register account if no account exists.
+    pub fn install_acme(cf_email: Option<&str>) -> Result<(), ServiceError> {
+        if Self::is_installed() { return Ok(()); }
+
+        // Check for dependencies
+        let has_curl = Command::new("which").arg("curl").output().map(|o| o.status.success()).unwrap_or(false);
+        let has_wget = Command::new("which").arg("wget").output().map(|o| o.status.success()).unwrap_or(false);
+
+        if !has_curl && !has_wget {
+            return Err(ServiceError::Acme("Either 'curl' or 'wget' is required to install acme.sh. Please install one first.".into()));
+        }
+
+        // Run the official installer
+        let cmd_str = if has_curl {
+            "curl https://get.acme.sh | sh"
+        } else {
+            "wget -O - https://get.acme.sh | sh"
+        };
+
+        let output = Command::new("bash")
+            .args(["-c", cmd_str])
+            .output()
+            .map_err(|e| ServiceError::Acme(format!("Failed to execute install command: {}", e)))?;
+
+        if !output.status.success() {
+            return Err(ServiceError::Acme(format!(
+                "acme.sh install script failed (exit code {}):\nSTDOUT: {}\nSTDERR: {}",
+                output.status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+
+        // Register account
+        let acme_sh = Self::find_acme_sh();
+        if acme_sh == "acme.sh" && !Self::is_installed() {
+             return Err(ServiceError::Acme("Installation seemed to succeed but acme.sh binary could not be located.".into()));
+        }
+
+        let mut register_args = vec!["--register-account"];
+        if let Some(email) = cf_email {
+            register_args.push("-m");
+            register_args.push(email);
+        } else {
+            register_args.push("-m");
+            register_args.push("my@example.com"); // acme.sh requires an email now
+        }
+        
+        let reg_output = Command::new(&acme_sh).args(&register_args).output();
+        if let Ok(out) = reg_output {
+            if !out.status.success() {
+                // Not a fatal error for the installation itself, but good to know
+                eprintln!("Account registration warning: {}", String::from_utf8_lossy(&out.stderr));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn find_acme_sh() -> String {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+        for path in &[
+            "/root/.acme.sh/acme.sh",
+            &format!("{}/.acme.sh/acme.sh", home),
+            &format!("{}/.acme.sh/acme.sh", home.trim_end_matches('/')),
+            "/usr/local/bin/acme.sh",
+            "/usr/bin/acme.sh",
+            "~/.acme.sh/acme.sh",
+        ] {
+            let p = if path.starts_with("~") {
+                path.replace("~", &home)
+            } else {
+                path.to_string()
+            };
+            if std::path::Path::new(&p).exists() { return p; }
+        }
+        "acme.sh".to_string() // fallback
     }
 
     fn run_acme(args: &[&str]) -> Result<String, ServiceError> {
-        let output = Command::new("acme.sh")
+        let acme_sh = Self::find_acme_sh();
+        let output = Command::new(&acme_sh)
             .args(args)
             .output()
             .map_err(|e| ServiceError::Acme(format!("Failed to run acme.sh: {}", e)))?;
@@ -45,11 +131,17 @@ impl AcmeService {
                 args.push("--dns");
                 args.push("dns_cf");
                 // Export CF credentials as env vars for acme.sh
-                if let Some(email) = cf_email {
-                    std::env::set_var("CF_Email", email);
-                }
-                if let Some(key) = cf_key {
-                    std::env::set_var("CF_Key", key);
+                // acme.sh handles both Global API Key (CF_Key + CF_Email) 
+                // and API Token (CF_Token)
+                if let Some(token) = cf_key {
+                    if token.starts_with("cfut_") || token.len() > 30 {
+                        std::env::set_var("CF_Token", token);
+                    } else {
+                        std::env::set_var("CF_Key", token);
+                        if let Some(email) = cf_email {
+                            std::env::set_var("CF_Email", email);
+                        }
+                    }
                 }
             }
             _ => return Err(ServiceError::Acme(format!("Unknown method: {}", method))),
@@ -92,8 +184,13 @@ impl AcmeService {
             let acme_dir = format!("{}/.acme.sh/{}", home, domain);
             let cert_path = format!("{}/fullchain.cer", acme_dir);
             let key_path = format!("{}/{}.key", acme_dir, domain);
-            let issued_at = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
-            let expires_at = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+
+            // Attempt to parse dates if they exist in parts 4 and 5
+            let issued_at = parts.get(4).and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+                .unwrap_or_else(|| NaiveDate::from_ymd_opt(2020, 1, 1).unwrap());
+            let expires_at = parts.get(5).and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+                .unwrap_or_else(|| NaiveDate::from_ymd_opt(2020, 1, 1).unwrap());
+
             certs.push(CertInfo {
                 domain, issued_at, expires_at, cert_path, key_path,
                 issuer: "Let's Encrypt".into(), auto_renew: false, renew_command: None,

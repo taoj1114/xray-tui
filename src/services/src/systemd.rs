@@ -119,16 +119,13 @@ impl SystemdService {
     }
 
     pub fn install_unit_file(&self) -> Result<(), ServiceError> {
-        if std::path::Path::new(&self.unit_file_path).exists() {
-            return Ok(());
-        }
-
         let unit_content = format!(
             "[Unit]\n\
              Description=Xray Service\n\
              After=network.target\n\n\
              [Service]\n\
              Type=simple\n\
+             User=root\n\
              ExecStart={} run -config {}\n\
              Restart=on-failure\n\
              RestartSec=5\n\n\
@@ -137,17 +134,25 @@ impl SystemdService {
             self.xray_binary, self.config_path
         );
 
-        let dir = std::path::Path::new(&self.unit_file_path).parent().unwrap();
-        std::fs::create_dir_all(dir)?;
-        std::fs::write(&self.unit_file_path, unit_content)?;
+        // Write unit file via sudo tee
+        let mut child = std::process::Command::new("sudo")
+            .args(["tee", &self.unit_file_path])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| ServiceError::Systemd(format!("Failed to spawn sudo tee for unit file: {}", e)))?;
 
-        duct::cmd!("systemctl", "daemon-reload")
-            .run()
-            .map_err(|e| ServiceError::Systemd(format!("Failed to reload: {}", e)))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            stdin.write_all(unit_content.as_bytes()).map_err(|e| ServiceError::Io(e))?;
+        }
+        let status = child.wait().map_err(|e| ServiceError::Io(e))?;
+        if !status.success() {
+            return Err(ServiceError::Systemd(format!("Failed to write unit file via sudo, exit code {}", status)));
+        }
 
-        duct::cmd!("systemctl", "enable", &self.unit_name)
-            .run()
-            .map_err(|e| ServiceError::Systemd(format!("Failed to enable: {}", e)))?;
+        let _ = std::process::Command::new("sudo").args(["systemctl", "daemon-reload"]).output();
+        let _ = std::process::Command::new("sudo").args(["systemctl", "enable", &self.unit_name]).output();
 
         Ok(())
     }

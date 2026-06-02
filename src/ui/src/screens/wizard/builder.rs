@@ -1,5 +1,5 @@
 use xray_model::*;
-use super::templates::InboundTemplate;
+use super::templates::TemplateParams;
 
 #[derive(Debug, Clone)]
 pub struct InboundConfigBuilder {
@@ -59,153 +59,38 @@ impl Default for InboundConfigBuilder {
 }
 
 impl InboundConfigBuilder {
-    pub fn apply_template(&mut self, template: &InboundTemplate) {
+    pub fn apply_template(&mut self, params: &TemplateParams) {
         let uuid = uuid::Uuid::new_v4().to_string();
-        match template {
-            InboundTemplate::VlessWsTls => {
-                self.protocol = InboundProtocol::VLess; self.port = 443;
-                self.tag = Some("vless-ws-tls".into());
-                self.transport = TransportNetwork::Ws;
-                self.ws_path = Some("/ws".into()); self.ws_host = Some("your-domain.com".into());
-                self.security = StreamSecurity::Tls;
-                self.tls_server_name = Some("your-domain.com".into());
-                self.tls_cert_path = Some("/etc/xray/certs/fullchain.pem".into());
-                self.tls_key_path = Some("/etc/xray/certs/privkey.pem".into());
-                self.uuid = Some(uuid);
-                self.sniffing_http = true; self.sniffing_tls = true;
-            }
-            InboundTemplate::VlessWsReality => {
-                self.protocol = InboundProtocol::VLess; self.port = 443;
-                self.tag = Some("vless-ws-reality".into());
-                self.transport = TransportNetwork::Ws; self.ws_path = Some("/ws".into());
-                self.security = StreamSecurity::Reality;
-                self.reality_server_name = Some("www.microsoft.com".into());
-                self.reality_dest = Some("127.0.0.1:8080".into());
-                self.reality_short_id = Some("abc123".into());
-                self.uuid = Some(uuid);
-                self.vless_flow = Some("xtls-rprx-vision".into());
-                self.sniffing_http = true; self.sniffing_tls = true;
-            }
-            InboundTemplate::VlessGrpcReality => {
-                self.protocol = InboundProtocol::VLess; self.port = 443;
-                self.tag = Some("vless-grpc-reality".into());
-                self.transport = TransportNetwork::Grpc;
-                self.grpc_service_name = Some("TunService".into()); self.grpc_multi_mode = true;
-                self.security = StreamSecurity::Reality;
-                self.reality_server_name = Some("www.google.com".into());
-                self.reality_dest = Some("127.0.0.1:8080".into());
-                self.reality_short_id = Some("abc123".into());
-                self.uuid = Some(uuid);
-                self.vless_flow = Some("xtls-rprx-vision".into());
-                self.sniffing_http = true; self.sniffing_tls = true;
-            }
-            InboundTemplate::VlessTcpXtlVision => {
-                self.protocol = InboundProtocol::VLess; self.port = 443;
-                self.tag = Some("vless-tcp-xtls".into());
-                self.security = StreamSecurity::Tls;
-                self.tls_server_name = Some("your-domain.com".into());
-                self.tls_cert_path = Some("/etc/xray/certs/fullchain.pem".into());
-                self.tls_key_path = Some("/etc/xray/certs/privkey.pem".into());
-                self.uuid = Some(uuid);
-                self.vless_flow = Some("xtls-rprx-vision".into());
-                self.sniffing_enabled = false; self.sniffing_http = false;
-                self.sniffing_tls = false; self.sniffing_quic = false;
-            }
-            InboundTemplate::VMessWsTls => {
-                self.protocol = InboundProtocol::VMess; self.port = 443;
-                self.tag = Some("vmess-ws-tls".into());
-                self.transport = TransportNetwork::Ws;
-                self.ws_path = Some("/ws".into()); self.ws_host = Some("your-domain.com".into());
-                self.security = StreamSecurity::Tls;
-                self.tls_server_name = Some("your-domain.com".into());
-                self.tls_cert_path = Some("/etc/xray/certs/fullchain.pem".into());
-                self.tls_key_path = Some("/etc/xray/certs/privkey.pem".into());
-                self.uuid = Some(uuid);
-                self.sniffing_http = true; self.sniffing_tls = true;
-            }
-            InboundTemplate::VMessWsCdn => {
-                self.protocol = InboundProtocol::VMess; self.port = 80;
-                self.tag = Some("vmess-ws-cdn".into());
-                self.transport = TransportNetwork::Ws;
-                self.ws_path = Some("/ws".into()); self.ws_host = Some("your-cdn-domain.com".into());
-                self.uuid = Some(uuid);
-                self.sniffing_http = true; self.sniffing_tls = true;
-            }
-            InboundTemplate::VMessGrpcTls => {
-                self.protocol = InboundProtocol::VMess; self.port = 443;
-                self.tag = Some("vmess-grpc-tls".into());
-                self.transport = TransportNetwork::Grpc;
-                self.grpc_service_name = Some("TunService".into()); self.grpc_multi_mode = true;
-                self.security = StreamSecurity::Tls;
-                self.tls_server_name = Some("your-domain.com".into());
-                self.tls_cert_path = Some("/etc/xray/certs/fullchain.pem".into());
-                self.tls_key_path = Some("/etc/xray/certs/privkey.pem".into());
-                self.uuid = Some(uuid);
-                self.sniffing_http = true; self.sniffing_tls = true;
-            }
-            InboundTemplate::TrojanWsTls => {
-                self.protocol = InboundProtocol::Trojan; self.port = 443;
-                self.tag = Some("trojan-ws-tls".into());
-                self.transport = TransportNetwork::Ws; self.ws_path = Some("/trojan".into());
-                self.security = StreamSecurity::Tls;
-                self.tls_server_name = Some("your-domain.com".into());
-                self.tls_cert_path = Some("/etc/xray/certs/fullchain.pem".into());
-                self.tls_key_path = Some("/etc/xray/certs/privkey.pem".into());
-                self.password = Some(Self::gen_password());
-                self.sniffing_http = true; self.sniffing_tls = true;
-            }
-            InboundTemplate::TrojanGrpcTls => {
-                self.protocol = InboundProtocol::Trojan; self.port = 443;
-                self.tag = Some("trojan-grpc-tls".into());
-                self.transport = TransportNetwork::Grpc;
-                self.grpc_service_name = Some("TunService".into()); self.grpc_multi_mode = true;
-                self.security = StreamSecurity::Tls;
-                self.tls_server_name = Some("your-domain.com".into());
-                self.tls_cert_path = Some("/etc/xray/certs/fullchain.pem".into());
-                self.tls_key_path = Some("/etc/xray/certs/privkey.pem".into());
-                self.password = Some(Self::gen_password());
-                self.sniffing_http = true; self.sniffing_tls = true;
-            }
-            InboundTemplate::ShadowsocksWsTls => {
-                self.protocol = InboundProtocol::Shadowsocks; self.port = 443;
-                self.tag = Some("ss-ws-tls".into());
-                self.transport = TransportNetwork::Ws; self.ws_path = Some("/ss".into());
-                self.security = StreamSecurity::Tls;
-                self.tls_server_name = Some("your-domain.com".into());
-                self.tls_cert_path = Some("/etc/xray/certs/fullchain.pem".into());
-                self.tls_key_path = Some("/etc/xray/certs/privkey.pem".into());
-                self.password = Some(Self::gen_password());
-                self.sniffing_http = true; self.sniffing_tls = true;
-            }
-            InboundTemplate::VlessHttpUpgradeReality => {
-                self.protocol = InboundProtocol::VLess; self.port = 443;
-                self.tag = Some("vless-hup-reality".into());
-                self.transport = TransportNetwork::HttpUpgrade; self.ws_path = Some("/".into());
-                self.security = StreamSecurity::Reality;
-                self.reality_server_name = Some("www.microsoft.com".into());
-                self.reality_dest = Some("127.0.0.1:8080".into());
-                self.reality_short_id = Some("abc123".into());
-                self.uuid = Some(uuid);
-                self.vless_flow = Some("xtls-rprx-vision".into());
-                self.sniffing_http = true; self.sniffing_tls = true;
-            }
-            InboundTemplate::SocksLocal => {
-                self.protocol = InboundProtocol::Socks; self.port = 1080;
-                self.listen = "127.0.0.1".into();
-                self.tag = Some("socks-in".into());
-                self.sniffing_enabled = false; self.sniffing_http = false;
-                self.sniffing_tls = false; self.sniffing_quic = false;
-            }
-            InboundTemplate::HttpLocal => {
-                self.protocol = InboundProtocol::Http; self.port = 8080;
-                self.listen = "127.0.0.1".into();
-                self.tag = Some("http-in".into());
-                self.http_user = Some("admin".into());
-                self.http_pass = Some(Self::gen_password());
-                self.sniffing_enabled = false; self.sniffing_http = false;
-                self.sniffing_tls = false; self.sniffing_quic = false;
-            }
-            InboundTemplate::Custom => {}
+        self.protocol = params.protocol.clone();
+        self.port = params.port;
+        self.listen = params.listen.into();
+        self.tag = if params.tag.is_empty() { None } else { Some(params.tag.into()) };
+        self.transport = params.transport.clone();
+        self.security = params.security.clone();
+        self.ws_path = params.ws_path.map(|s| s.to_string());
+        self.ws_host = params.ws_host.map(|s| s.to_string());
+        self.grpc_service_name = params.grpc_service.map(|s| s.to_string());
+        self.grpc_multi_mode = params.grpc_multi;
+        self.tls_server_name = params.tls_sni.map(|s| s.to_string());
+        self.tls_cert_path = params.tls_cert.map(|s| s.to_string());
+        self.tls_key_path = params.tls_key.map(|s| s.to_string());
+        self.reality_server_name = params.reality_sni.map(|s| s.to_string());
+        self.reality_dest = params.reality_dest.map(|s| s.to_string());
+        self.reality_short_id = params.reality_sid.map(|s| s.to_string());
+        self.reality_fingerprint = "chrome".into();
+        self.sniffing_enabled = params.sniff_on;
+        self.sniffing_http = params.sniff_http;
+        self.sniffing_tls = params.sniff_tls;
+        self.sniffing_quic = params.sniff_quic;
+        self.vless_flow = params.vless_flow.map(|s| s.to_string());
+        self.uuid = Some(uuid);
+        self.http_user = params.http_user.map(|s| s.to_string());
+        let needs_password = matches!(self.protocol, InboundProtocol::Trojan | InboundProtocol::Shadowsocks);
+        if needs_password {
+            self.password = Some(Self::gen_password());
+        }
+        if matches!(self.protocol, InboundProtocol::Http) {
+            self.http_pass = Some(Self::gen_password());
         }
     }
 

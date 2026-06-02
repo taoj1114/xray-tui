@@ -14,6 +14,20 @@ pub fn handle_key(key: KeyEvent, app: &mut App, wiz: &mut InboundWizardState) ->
     match key.code {
         KeyCode::Tab => { let n = wiz.fields.len(); if n > 0 { wiz.focused = (wiz.focused + 1) % n; } return None; }
         KeyCode::BackTab => { let n = wiz.fields.len(); if n > 0 { wiz.focused = (wiz.focused + n - 1) % n; } return None; }
+        KeyCode::Up => {
+            if let Some(f) = wiz.fields.get(wiz.focused) {
+                if f.is_open && f.field_type == WizardFieldType::Dropdown { return handle_dropdown_nav(wiz, false); }
+            }
+            let n = wiz.fields.len(); if n > 0 { wiz.focused = (wiz.focused + n - 1) % n; }
+            return None;
+        }
+        KeyCode::Down => {
+            if let Some(f) = wiz.fields.get(wiz.focused) {
+                if f.is_open && f.field_type == WizardFieldType::Dropdown { return handle_dropdown_nav(wiz, true); }
+            }
+            let n = wiz.fields.len(); if n > 0 { wiz.focused = (wiz.focused + 1) % n; }
+            return None;
+        }
         KeyCode::Enter => return handle_enter(app, wiz),
         KeyCode::Esc => {
             if wiz.close_dropdowns() { app.mode = InputMode::Normal; return None; }
@@ -22,8 +36,20 @@ pub fn handle_key(key: KeyEvent, app: &mut App, wiz: &mut InboundWizardState) ->
         }
         KeyCode::Right if key.modifiers.is_empty() => { if let Some(err) = wiz.next_step() { wiz.error_msg = Some(format!("Validation: {}", err)); } return None; }
         KeyCode::Left if key.modifiers.is_empty() => { wiz.prev_step(); return None; }
-        KeyCode::Up => return handle_dropdown_nav(wiz, false),
-        KeyCode::Down => return handle_dropdown_nav(wiz, true),
+        KeyCode::Char('k') if !matches!(wiz.fields.get(wiz.focused).map(|f| &f.field_type), Some(WizardFieldType::TextInput)) => {
+            if let Some(f) = wiz.fields.get(wiz.focused) {
+                if f.is_open && f.field_type == WizardFieldType::Dropdown { return handle_dropdown_nav(wiz, false); }
+            }
+            let n = wiz.fields.len(); if n > 0 { wiz.focused = (wiz.focused + n - 1) % n; }
+            return None;
+        }
+        KeyCode::Char('j') if !matches!(wiz.fields.get(wiz.focused).map(|f| &f.field_type), Some(WizardFieldType::TextInput)) => {
+            if let Some(f) = wiz.fields.get(wiz.focused) {
+                if f.is_open && f.field_type == WizardFieldType::Dropdown { return handle_dropdown_nav(wiz, true); }
+            }
+            let n = wiz.fields.len(); if n > 0 { wiz.focused = (wiz.focused + 1) % n; }
+            return None;
+        }
         KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if let Some(f) = wiz.fields.iter_mut().find(|f| f.label == "UUID") { f.value = uuid::Uuid::new_v4().to_string(); }
             return None;
@@ -51,7 +77,7 @@ fn handle_template_step(key: KeyEvent, wiz: &mut InboundWizardState) -> Option<A
             if wiz.focused < max { wiz.focused += 1; wiz.selected_template = wiz.focused; } None
         }
         KeyCode::Enter => {
-            if let Some(t) = InboundTemplate::all().get(wiz.selected_template) { wiz.builder.apply_template(t); }
+            if let Some(t) = InboundTemplate::all().get(wiz.selected_template) { wiz.builder.apply_template(&t.resolve_params()); }
             wiz.next_step(); None
         }
         KeyCode::Esc => Some(Action::PopScreen),
@@ -131,7 +157,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, wiz: &InboundWizardState) {
             f.render_widget(Paragraph::new(items).block(Block::default().borders(Borders::ALL).style(Style::default().bg(Color::Rgb(20, 20, 30)))), pop);
         }
     }
-    f.render_widget(Paragraph::new(vec![Line::from(Span::styled("←→ step  Tab field  Enter confirm/open  Esc back/close  ^G new UUID  ^K gen Reality keys", Style::default().fg(Color::DarkGray)))]), chunks[1]);
+    f.render_widget(Paragraph::new(vec![Line::from(Span::styled("←→ step  ↑↓/Tab field  Enter confirm/open  Esc back/close  ^G UUID  ^K RealityKeys", Style::default().fg(Color::DarkGray)))]), chunks[1]);
 
     // If on Security step, show available certs
     if wiz.current_step == WizardStep::Security && !app.certificates.is_empty() && wiz.builder.security == xray_model::StreamSecurity::Tls {

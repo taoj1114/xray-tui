@@ -3,11 +3,12 @@ use crossterm::event::{KeyEvent, KeyCode};
 use crate::{App, Action};
 
 const ITEMS: &[(&str, &str)] = &[
-    ("Install Xray",     "Download & install Xray via official script"),
-    ("Start Xray",       "Start the Xray service via systemd"),
-    ("Restart Xray",     "Reload config & restart service"),
-    ("Stop Xray",        "Stop the running Xray service"),
-    ("Uninstall Xray",   "Stop service, remove binary, config & systemd unit"),
+    ("Install Xray",       "Download & install Xray via official script"),
+    ("Configure Systemd",  "Install & enable systemd service with current paths"),
+    ("Start Xray",         "Start the Xray service via systemd"),
+    ("Restart Xray",       "Reload config & restart service"),
+    ("Stop Xray",          "Stop the running Xray service"),
+    ("Uninstall Xray",     "Stop service, remove binary, config & systemd unit"),
 ];
 
 pub fn handle_key(key: KeyEvent, app: &mut App) -> Option<Action> {
@@ -16,10 +17,11 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> Option<Action> {
         KeyCode::Down | KeyCode::Char('j') => { let c = &mut app.command_cursor; if *c + 1 < ITEMS.len() { *c += 1; } None }
         KeyCode::Enter => match app.command_cursor {
             0 => Some(Action::InstallXray),
-            1 => Some(Action::StartXray),
-            2 => Some(Action::RestartXray),
-            3 => Some(Action::StopXray),
-            4 => Some(Action::UninstallXray),
+            1 => Some(Action::InstallSystemd),
+            2 => Some(Action::StartXray),
+            3 => Some(Action::RestartXray),
+            4 => Some(Action::StopXray),
+            5 => Some(Action::UninstallXray),
             _ => None,
         },
         _ => None,

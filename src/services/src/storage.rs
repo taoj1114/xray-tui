@@ -1,5 +1,5 @@
 use crate::error::ServiceError;
-use xray_model::{AppState, GlobalSettings, InboundConfig, CertInfo, StoredInbound};
+use xray_model::{AppState, GlobalSettings, CertInfo};
 
 pub struct Storage {
     state_path: String,
@@ -16,7 +16,6 @@ impl Storage {
         if !std::path::Path::new(&self.state_path).exists() {
             return Ok(AppState {
                 settings: GlobalSettings::default(),
-                stored_inbounds: vec![],
                 stored_certs: vec![],
             });
         }
@@ -30,7 +29,6 @@ impl Storage {
     pub fn save_state(
         &self,
         settings: &GlobalSettings,
-        inbounds: &[InboundConfig],
         certs: &[CertInfo],
     ) -> Result<(), ServiceError> {
         let dir = std::path::Path::new(&self.state_path).parent().unwrap();
@@ -38,7 +36,6 @@ impl Storage {
 
         let state = AppState {
             settings: settings.clone(),
-            stored_inbounds: inbounds.iter().map(StoredInbound::from).collect(),
             stored_certs: certs.to_vec(),
         };
 

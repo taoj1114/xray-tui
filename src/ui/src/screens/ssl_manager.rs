@@ -85,11 +85,13 @@ pub fn handle_key(key: KeyEvent, app: &mut App, selected: &mut usize, edit: &mut
         KeyCode::Right => { if *selected + 1 < len { *selected += 1; } None }
         KeyCode::Enter => match app.command_cursor {
             0 => {
-                let installed = std::process::Command::new("which").arg("acme.sh").output().map(|o| o.status.success()).unwrap_or(false);
-                if !installed {
-                    return Some(Action::ShowMessage("acme.sh not found. Install: curl https://get.acme.sh | sh".into()));
+                // Auto-detect & install acme.sh if missing
+                if !xray_services::AcmeService::is_installed() {
+                    match xray_services::AcmeService::install_acme(app.settings.cf_email.as_deref()) {
+                        Ok(_) => { /* success, continue */ }
+                        Err(e) => return Some(Action::ShowMessage(format!("acme.sh install failed: {}", e))),
+                    }
                 }
-                // Check CF credentials if dns_cf is default (index 2)
                 let cf_ok = app.settings.cf_email.is_some() && app.settings.cf_token.is_some();
                 *edit = Some(SslEditState { domain: String::new(), method_idx: if cf_ok { 2 } else { 0 }, webroot: "/var/www/html".into(), field: 0 });
                 None
@@ -111,8 +113,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, selected: usize, edit: &Opti
     ]).split(area);
 
     let acme_tooltip = if edit.is_some() { "" } else {
-        let installed = std::process::Command::new("which").arg("acme.sh").output().map(|o| o.status.success()).unwrap_or(false);
-        if !installed { " │  ⚠ acme.sh not installed" } else { "" }
+        if !xray_services::AcmeService::is_installed() { " │  ⚠ acme.sh not installed" } else { "" }
     };
 
     let header = Row::new(["#","Domain","Expires","Status","Auto"]).style(Style::default().fg(Color::Cyan));

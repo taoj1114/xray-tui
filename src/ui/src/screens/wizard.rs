@@ -1,6 +1,7 @@
 mod templates;
 mod builder;
 mod state;
+mod logic;
 mod ui;
 
 pub use templates::InboundTemplate;

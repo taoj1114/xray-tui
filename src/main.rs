@@ -12,7 +12,7 @@ use crossterm::{
 };
 
 use xray_model::{AppState, GlobalSettings};
-use xray_services::{XrayService, SystemdService, Storage};
+use xray_services::{XrayService, SystemdService, Storage, ConfigManager};
 use xray_ui::{App, render};
 
 fn main() -> anyhow::Result<()> {
@@ -24,9 +24,9 @@ fn main() -> anyhow::Result<()> {
 
     let settings = GlobalSettings::default();
     let storage = Storage::new(&settings);
+    let config_manager = ConfigManager::new(&settings.config_dir);
     let state = storage.load_or_default().unwrap_or_else(|_| AppState {
         settings: settings.clone(),
-        stored_inbounds: vec![],
         stored_certs: vec![],
     });
 
@@ -36,7 +36,7 @@ fn main() -> anyhow::Result<()> {
         state.settings.config_path.clone(),
     );
 
-    let mut app = App::new(xray_service, systemd_service, storage, state);
+    let mut app = App::new(xray_service, systemd_service, storage, config_manager, state);
     app.refresh_status();
 
     let tick_rate = Duration::from_millis(16);

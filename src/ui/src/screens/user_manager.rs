@@ -45,8 +45,8 @@ const COMMANDS: &[(&str, &str)] = &[
 
 pub fn handle_key(key: KeyEvent, app: &mut App, selected: &mut usize, inbound_idx: usize, editing: &mut Option<UserEditMode>) -> Option<Action> {
     let inb = match app.inbounds.get(inbound_idx) { Some(i) => i, None => return None };
-    let count = inb.user_count();
-    let proto = inb.protocol.to_string();
+    let count = inb.config.user_count();
+    let proto = inb.config.protocol.to_string();
 
     // If in edit mode, handle inline editing keys
     if let Some(ref mut edit) = editing {
@@ -86,7 +86,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App, selected: &mut usize, inbound_id
                 None
             }
             1 if count > 0 => {
-                let existing = get_user_values(inb, *selected);
+                let existing = get_user_values(&inb.config, *selected);
                 let refs: Vec<&str> = existing.iter().map(|s| s.as_str()).collect();
                 let mut edit = UserEditMode::for_protocol(&proto, &refs);
                 edit.is_new = false;
@@ -100,14 +100,16 @@ pub fn handle_key(key: KeyEvent, app: &mut App, selected: &mut usize, inbound_id
             })),
             3 if count > 0 => {
                 let ip = app.settings.server_public_ip.clone().unwrap_or("your-server-ip".into());
-                xray_services::SubscriptionService::generate_share_link(&app.inbounds[inbound_idx], &ip, *selected)
-                    .map(|l| Action::PushScreen(Screen::ShareExport { content: l }))
+                match xray_services::SubscriptionService::generate_share_link(&inb.config, &ip, *selected) {
+                    Some(l) => Some(Action::PushScreen(Screen::ShareExport { content: l })),
+                    None => Some(Action::ShowMessage("Sharing not supported for this protocol".into())),
+                }
             }
             4 => {
                 let ip = app.settings.server_public_ip.clone().unwrap_or("your-server-ip".into());
                 let mut links = Vec::new();
                 for i in 0..count {
-                    if let Some(l) = xray_services::SubscriptionService::generate_share_link(&app.inbounds[inbound_idx], &ip, i) {
+                    if let Some(l) = xray_services::SubscriptionService::generate_share_link(&inb.config, &ip, i) {
                         links.push(l);
                     }
                 }
@@ -139,21 +141,20 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, inbound_idx: usize, selected
 
     let edit_height = if editing.is_some() { 4 } else { 0 };
     let chunks = Layout::vertical([
-        Constraint::Length(3 + inb.user_count().max(1) as u16),
+        Constraint::Length(3 + inb.config.user_count().max(1) as u16),
         Constraint::Min(if edit_height > 0 { 8 } else { 4 }),
     ]).split(area);
 
     let header = Row::new(["#", "Credential", "Email", "Option 1"]).style(Style::default().fg(Color::Cyan));
-    let rows: Vec<Row> = match &inb.settings {
+    let rows: Vec<Row> = match &inb.config.settings {
         ProtocolSettings::VMess(s) => s.clients.iter().enumerate().map(|(i,c)| { let hl=i==selected; let st=if hl{Style::default().fg(Color::Black).bg(Color::White)}else{Style::default()}; Row::new(vec![Cell::from((i+1).to_string()).style(st),Cell::from(c.id.as_str()).style(st),Cell::from(c.email.as_deref().unwrap_or("")).style(st),Cell::from(c.security.as_str()).style(st)]) }).collect(),
         ProtocolSettings::VLess(s) => s.clients.iter().enumerate().map(|(i,c)| { let hl=i==selected; let st=if hl{Style::default().fg(Color::Black).bg(Color::White)}else{Style::default()}; Row::new(vec![Cell::from((i+1).to_string()).style(st),Cell::from(c.id.as_str()).style(st),Cell::from(c.email.as_deref().unwrap_or("")).style(st),Cell::from(c.flow.as_deref().unwrap_or("")).style(st)]) }).collect(),
         ProtocolSettings::Trojan(s) => s.clients.iter().enumerate().map(|(i,c)| { let hl=i==selected; let st=if hl{Style::default().fg(Color::Black).bg(Color::White)}else{Style::default()}; Row::new(vec![Cell::from((i+1).to_string()).style(st),Cell::from(c.password.as_str()).style(st),Cell::from(c.email.as_deref().unwrap_or("")).style(st),Cell::from("")]) }).collect(),
         ProtocolSettings::Shadowsocks(s) => { let hl=0==selected; let st=if hl{Style::default().fg(Color::Black).bg(Color::White)}else{Style::default()}; vec![Row::new(vec![Cell::from("1").style(st),Cell::from(s.password.as_str()).style(st),Cell::from(s.email.as_deref().unwrap_or("")).style(st),Cell::from(s.method.as_str()).style(st)])] },
         ProtocolSettings::Http(s) => s.accounts.iter().enumerate().map(|(i,a)| { let hl=i==selected; let st=if hl{Style::default().fg(Color::Black).bg(Color::White)}else{Style::default()}; Row::new(vec![Cell::from((i+1).to_string()).style(st),Cell::from(a.user.as_str()).style(st),Cell::from(a.pass.as_str()).style(st),Cell::from("")]) }).collect(),
         ProtocolSettings::Socks(s) => match &s.auth { SocksAuth::Password{ accounts } => accounts.iter().enumerate().map(|(i,a)| { let hl=i==selected; let st=if hl{Style::default().fg(Color::Black).bg(Color::White)}else{Style::default()}; Row::new(vec![Cell::from((i+1).to_string()).style(st),Cell::from(a.user.as_str()).style(st),Cell::from(a.pass.as_str()).style(st),Cell::from("")]) }).collect(), SocksAuth::NoAuth{} => vec![Row::new(vec!["","(no auth required)","",""])] },
-        _ => vec![Row::new(["","no users","",""])],
     };
-    f.render_widget(Table::new(rows,[Constraint::Length(3),Constraint::Length(32),Constraint::Length(16),Constraint::Length(18)]).header(header).block(Block::default().borders(Borders::ALL).title(format!("Users — {}", inb.tag.as_deref().unwrap_or("-")))), chunks[0]);
+    f.render_widget(Table::new(rows,[Constraint::Length(3),Constraint::Length(32),Constraint::Length(16),Constraint::Length(18)]).header(header).block(Block::default().borders(Borders::ALL).title(format!("Users — {}", inb.config.tag.as_deref().unwrap_or("-")))), chunks[0]);
 
     // Command menu or edit form
     let bottom_lines: Vec<Line> = if let Some(edit) = editing {

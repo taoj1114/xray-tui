@@ -1,7 +1,7 @@
 use ratatui::{Frame, layout::{Layout, Constraint, Rect}, style::{Color, Style}, text::{Line, Span}, widgets::{Block, Borders, Paragraph, Row, Table, Cell}};
 use crossterm::event::{KeyEvent, KeyCode};
 use xray_model::RoutingRule;
-use crate::{App, Action, Screen};
+use crate::{App, Action};
 
 #[derive(Debug, Clone)]
 pub enum RoutingEditMode { New, Edit(usize) }
@@ -51,7 +51,6 @@ fn rule_info(r: &RoutingRule) -> (String, String, String) {
         .or_else(|| r.port.clone())
         .or_else(|| r.protocol.as_ref().map(|p| p.join(",")))
         .unwrap_or_else(|| "*".into());
-    let action = if r.outbound_tag == "block" { format!("BLOCK") } else { r.outbound_tag.clone() };
     let enabled = if r.outbound_tag == "block" { "●" } else { "○" };
     (t.to_string(), m, enabled.to_string())
 }
@@ -63,7 +62,7 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, selected: usize, _editing: O
         app.routing_rules.iter().enumerate().map(|(i,r)| {
             let hl = i == selected;
             let s = if hl { Style::default().fg(Color::Black).bg(Color::White) } else { Style::default() };
-            let (t, m, a) = rule_info(r);
+            let (t, m, _) = rule_info(r);
             let en_color = if r.outbound_tag == "block" { Color::DarkGray } else { Color::Green };
             Row::new(vec![
                 Cell::from((i+1).to_string()).style(s),

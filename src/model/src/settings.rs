@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 pub struct GlobalSettings {
     pub xray_binary_path: String,
     pub config_path: String,
+    #[serde(default = "default_config_dir")]
+    pub config_dir: String,
     pub log_level: String,
     pub server_public_ip: Option<String>,
     pub state_dir: String,
@@ -12,11 +14,14 @@ pub struct GlobalSettings {
     pub cf_zone_id: Option<String>,
 }
 
+fn default_config_dir() -> String { format!("{}/conf.d", dirs_like_path()) }
+
 impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
             xray_binary_path: "/usr/local/bin/xray".into(),
             config_path: "/usr/local/etc/xray/config.json".into(),
+            config_dir: default_config_dir(),
             log_level: "warning".into(),
             server_public_ip: None,
             state_dir: dirs_like_path(),
@@ -118,6 +123,5 @@ impl From<&InboundConfig> for StoredInbound {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppState {
     pub settings: GlobalSettings,
-    pub stored_inbounds: Vec<StoredInbound>,
     pub stored_certs: Vec<crate::ssl::CertInfo>,
 }

@@ -20,17 +20,33 @@ impl XrayService {
 
     pub fn write_config(&self, config: &XrayConfig) -> Result<(), ServiceError> {
         let json = serde_json::to_string_pretty(config)?;
-
         let config_path = &self.settings.config_path;
-        if std::path::Path::new(config_path).exists() {
-            let _ = std::fs::copy(config_path, format!("{}.bak", config_path));
-        }
 
+        // Try to create parent directory
         if let Some(parent) = std::path::Path::new(config_path).parent() {
-            std::fs::create_dir_all(parent)?;
+            let _ = std::process::Command::new("sudo").args(["mkdir", "-p", parent.to_str().unwrap()]).output();
         }
 
-        std::fs::write(config_path, json.as_bytes())?;
+        // Try writing directly first
+        if let Err(_) = std::fs::write(config_path, &json) {
+            // If failed (likely permission), try via sudo tee
+            let mut child = std::process::Command::new("sudo")
+                .args(["tee", config_path])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .map_err(|e| ServiceError::Storage(format!("Failed to spawn sudo tee: {}", e)))?;
+
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                stdin.write_all(json.as_bytes()).map_err(|e| ServiceError::Io(e))?;
+            }
+            let status = child.wait().map_err(|e| ServiceError::Io(e))?;
+            if !status.success() {
+                return Err(ServiceError::Storage(format!("sudo tee failed with exit code {}", status)));
+            }
+        }
+        
         Ok(())
     }
 
@@ -144,7 +160,7 @@ impl XrayService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xray_model::{InboundProtocol, VLessSettings, VLessClient, TransportNetwork, StreamSecurity, StreamSettings, WsSettings, SniffingConfig, ProtocolSettings};
+    use xray_model::{InboundProtocol, VLessSettings, VLessClient, TransportNetwork, StreamSecurity, StreamSettings, SniffingConfig, ProtocolSettings};
 
     #[test]
     fn test_generate_and_validate() {

@@ -1,5 +1,7 @@
 pub mod widgets;
 pub mod screens;
-mod app;
+pub mod app;
+pub mod render;
 
 pub use app::*;
+pub use render::render;
