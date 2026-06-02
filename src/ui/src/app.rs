@@ -43,11 +43,12 @@ pub enum Action {
     SaveInbound(InboundConfig), UpdateInbound(usize, InboundConfig),
     DeleteInbound(usize), AddUser(usize, UserData), DeleteUser(usize, usize),
     SaveRouting(Vec<RoutingRule>), RestartXray, StartXray, StopXray,
-    InstallXray, InstallSystemd,
+    InstallXray, UninstallXray, InstallSystemd,
     ExportSubscription, UpdateSettings(GlobalSettings), ShowMessage(String),
-    IssueCert(String),
+    IssueCertWithMethod { domain: String, method: String, webroot: Option<String> },
     ToggleInbound(usize),
     SaveUser { inbound_idx: usize, user_idx: usize, proto: String, labels: Vec<String>, values: Vec<String>, is_new: bool },
+    GenerateRealityKeys,
     Quit,
 }
 
@@ -70,13 +71,14 @@ pub struct App {
     pub settings: GlobalSettings,
     pub xray_service: Arc<XrayService>,
     pub systemd_service: Arc<SystemdService>,
+    pub storage: Arc<Storage>,
     pub should_quit: bool,
     pub status_message: Option<(String, Instant)>,
     tick_count: u64,
 }
 
 impl App {
-    pub fn new(xray_service: XrayService, systemd_service: SystemdService, _storage: Storage, state: AppState) -> Self {
+    pub fn new(xray_service: XrayService, systemd_service: SystemdService, storage: Storage, state: AppState) -> Self {
         Self {
             current_screen: Screen::Dashboard, screen_history: Vec::new(),
             command_cursor: 0,
@@ -85,6 +87,7 @@ impl App {
             routing_rules: RoutingRule::all_presets(),
             xray_status: XrayStatus::default(), settings: state.settings,
             xray_service: Arc::new(xray_service), systemd_service: Arc::new(systemd_service),
+            storage: Arc::new(storage),
             should_quit: false, status_message: None, tick_count: 0,
         }
     }
@@ -254,11 +257,21 @@ impl App {
             Action::PushScreen(s) => self.push_screen(s),
             Action::PopScreen => self.pop_screen(),
             Action::SaveInbound(inbound) => {
+                if self.detect_port_conflict(&inbound, None) {
+                    self.show_msg("Port conflict — another inbound already uses this port");
+                    return;
+                }
                 self.inbounds.push(inbound); self.write_config(); self.show_msg("Inbound saved");
                 self.current_screen = Screen::InboundList { selected: self.inbounds.len().saturating_sub(1) };
             }
             Action::UpdateInbound(idx, inbound) => {
-                if idx < self.inbounds.len() { self.inbounds[idx] = inbound; self.write_config(); self.show_msg("Updated"); }
+                if idx < self.inbounds.len() {
+                    if self.detect_port_conflict(&inbound, Some(idx)) {
+                        self.show_msg("Port conflict — another inbound already uses this port");
+                        return;
+                    }
+                    self.inbounds[idx] = inbound; self.write_config(); self.show_msg("Updated");
+                }
                 self.current_screen = Screen::InboundList { selected: idx };
             }
             Action::DeleteInbound(idx) => {
@@ -306,6 +319,13 @@ impl App {
                     Err(e) => self.show_msg(&format!("Install failed: {}", e)),
                 }
             }
+            Action::UninstallXray => {
+                self.show_msg("Uninstalling Xray...");
+                match self.xray_service.uninstall_xray() {
+                    Ok(_) => { self.refresh_status(); self.show_msg("Xray uninstalled"); }
+                    Err(e) => self.show_msg(&format!("Uninstall failed: {}", e)),
+                }
+            }
             Action::InstallSystemd => {
                 match self.systemd_service.install_unit_file() {
                     Ok(_) => self.show_msg("systemd unit installed & enabled"),
@@ -318,8 +338,24 @@ impl App {
                 self.current_screen = Screen::ShareExport { content: sub };
             }
             Action::ToggleInbound(_) => { self.show_msg("Toggled"); }
-            Action::IssueCert(domain) => {
-                match xray_services::AcmeService::issue_cert(&domain, "webroot", Some("/var/www/html")) {
+            Action::GenerateRealityKeys => {
+                match self.xray_service.generate_reality_keys() {
+                    Ok((priv_key, pub_key)) => {
+                        if let Screen::InboundWizard(ref mut wiz) = &mut self.current_screen {
+                            wiz.builder.reality_public_key = Some(pub_key);
+                            wiz.builder.reality_private_key = Some(priv_key);
+                            for f in &mut wiz.fields {
+                                if f.label == "Public Key" { f.value = wiz.builder.reality_public_key.clone().unwrap_or_default(); }
+                                if f.label == "Private Key" { f.value = wiz.builder.reality_private_key.clone().unwrap_or_default(); }
+                            }
+                        }
+                        self.show_msg("Reality keys generated");
+                    }
+                    Err(e) => self.show_msg(&format!("Key gen failed: {}", e)),
+                }
+            }
+            Action::IssueCertWithMethod { domain, method, webroot } => {
+                match xray_services::AcmeService::issue_cert(&domain, &method, webroot.as_deref()) {
                     Ok(_) => {
                         let path = format!("/etc/xray/certs/{}/fullchain.pem", domain);
                         self.certificates.push(CertInfo {
@@ -412,7 +448,18 @@ impl App {
         self.current_screen = Screen::UserManager { inbound_idx, selected: user_idx, editing: None };
     }
     pub fn refresh_status(&mut self) { if let Ok(s) = self.systemd_service.get_status() { self.xray_status = s; } }
-    pub fn save_and_quit(&self) {}
+    pub fn save_and_quit(&self) {
+        if let Err(e) = self.storage.save_state(&self.settings, &self.inbounds, &self.certificates) {
+            eprintln!("Failed to save state: {}", e);
+        }
+    }
+
+    fn detect_port_conflict(&self, inbound: &InboundConfig, skip_idx: Option<usize>) -> bool {
+        self.inbounds.iter().enumerate().any(|(i, e)| {
+            if skip_idx == Some(i) { return false; }
+            e.port == inbound.port && e.listen == inbound.listen
+        })
+    }
 }
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();

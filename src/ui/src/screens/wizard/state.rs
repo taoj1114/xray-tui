@@ -41,12 +41,13 @@ pub struct InboundWizardState {
     pub auto_restart: bool,
     pub json_preview: String,
     pub selected_template: usize,
+    pub error_msg: Option<String>,
 }
 
 impl InboundWizardState {
     pub fn new() -> Self {
         Self { current_step: WizardStep::Template, edit_index: None, builder: InboundConfigBuilder::default(),
-            fields: Self::build_template_fields(), focused: 0, auto_restart: false, json_preview: String::new(), selected_template: 0 }
+            fields: Self::build_template_fields(), focused: 0, auto_restart: false, json_preview: String::new(), selected_template: 0, error_msg: None }
     }
 
     pub fn edit(index: usize, inbound: InboundConfig) -> Self {
@@ -158,8 +159,10 @@ impl InboundWizardState {
         any
     }
 
-    pub fn next_step(&mut self) {
+    pub fn next_step(&mut self) -> Option<String> {
         self.apply_fields();
+        if let Some(err) = self.validate() { self.error_msg = Some(err); return self.error_msg.clone(); }
+        self.error_msg = None;
         match self.current_step {
             WizardStep::Template => self.current_step = WizardStep::Basic,
             WizardStep::Basic => self.current_step = WizardStep::Transport,
@@ -171,6 +174,39 @@ impl InboundWizardState {
         }
         if self.current_step != WizardStep::Confirm { self.fields = Self::build_step_fields(self.current_step.clone(), &self.builder); }
         self.focused = 0;
+        None
+    }
+
+    fn validate(&self) -> Option<String> {
+        match self.current_step {
+            WizardStep::Basic => {
+                let b = &self.builder;
+                if b.port == 0 || b.port < 1 || b.port > 65535 { return Some("Port must be 1–65535".into()); }
+                if b.listen.is_empty() { return Some("Listen address is required".into()); }
+            }
+            WizardStep::Transport => {
+                let b = &self.builder;
+                if b.transport == TransportNetwork::Ws {
+                    if let Some(ref p) = b.ws_path { if !p.starts_with('/') { return Some("WS Path must start with /".into()); } }
+                }
+            }
+            WizardStep::Users => {
+                let b = &self.builder;
+                match b.protocol {
+                    InboundProtocol::VMess | InboundProtocol::VLess => {
+                        if let Some(ref id) = b.uuid {
+                            if uuid::Uuid::parse_str(id).is_err() { return Some("UUID format is invalid".into()); }
+                        }
+                    }
+                    InboundProtocol::Trojan | InboundProtocol::Shadowsocks => {
+                        if b.password.as_ref().map_or(false, |p| p.is_empty()) { return Some("Password is required".into()); }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        None
     }
 
     pub fn prev_step(&mut self) {

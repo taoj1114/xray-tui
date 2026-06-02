@@ -118,12 +118,21 @@ impl XrayService {
         Ok(())
     }
 
-    /// 用 xray 自带的 geoip/geosite 数据更新
-    pub fn update_geo_data(&self) -> Result<(), ServiceError> {
-        duct::cmd!(&self.settings.xray_binary_path, "version")
-            .stderr_to_stdout()
-            .read()
-            .map_err(|e| ServiceError::Command(format!("Xray geo update failed: {}", e)))?;
+    /// Uninstall Xray — stop service, remove binary, config, and systemd unit
+    pub fn uninstall_xray(&self) -> Result<(), ServiceError> {
+        let binary = &self.settings.xray_binary_path;
+        let config = &self.settings.config_path;
+        // Stop & disable systemd unit first
+        let _ = std::process::Command::new("sudo").args(["systemctl", "stop", "xray"]).output();
+        let _ = std::process::Command::new("sudo").args(["systemctl", "disable", "xray"]).output();
+        // Remove unit file
+        let _ = std::process::Command::new("sudo").args(["rm", "-f", "/etc/systemd/system/xray.service"]).output();
+        let _ = std::process::Command::new("sudo").args(["systemctl", "daemon-reload"]).output();
+        // Remove binary
+        let _ = std::process::Command::new("sudo").args(["rm", "-f", binary]).output();
+        // Remove config + backup
+        let _ = std::process::Command::new("sudo").args(["rm", "-f", config]).output();
+        let _ = std::process::Command::new("sudo").args(["rm", "-f", &format!("{}.bak", config)]).output();
         Ok(())
     }
 

@@ -30,10 +30,12 @@ impl SystemdService {
 
         let is_running = String::from_utf8_lossy(&output.stdout).trim() == "active";
 
-        let (version, pid) = if is_running {
-            self.get_version_and_pid().unwrap_or((None, None))
+        let (version, pid, cpu_pct, mem_bytes, uptime_sec) = if is_running {
+            let vp = self.get_version_and_pid().unwrap_or((None, None));
+            let res = vp.1.and_then(|p| self.get_process_stats(p)).unwrap_or((None, None, None));
+            (vp.0, vp.1, res.0, res.1, res.2)
         } else {
-            (None, None)
+            (None, None, None, None, None)
         };
 
         Ok(XrayStatus {
@@ -41,10 +43,33 @@ impl SystemdService {
             is_running,
             version,
             pid,
-            cpu_percent: None,
-            memory_bytes: None,
-            uptime_seconds: None,
+            cpu_percent: cpu_pct,
+            memory_bytes: mem_bytes,
+            uptime_seconds: uptime_sec,
         })
+    }
+
+    fn get_process_stats(&self, pid: u32) -> Option<(Option<f64>, Option<u64>, Option<u64>)> {
+        let stat = std::fs::read_to_string(format!("/proc/{}/stat", pid)).ok()?;
+        let fields: Vec<&str> = stat.split_whitespace().collect();
+        // field 13: utime, field 14: stime (jiffies), field 21: starttime
+        let utime: u64 = fields.get(13)?.parse().ok()?;
+        let stime: u64 = fields.get(14)?.parse().ok()?;
+        let starttime: u64 = fields.get(21)?.parse().ok()?;
+        let cpu_total = utime + stime;
+        let clk_tck = 100u64; // sysconf(_SC_CLK_TCK) typically 100
+        let uptime = std::fs::read_to_string("/proc/uptime").ok()?;
+        let sys_uptime: f64 = uptime.split_whitespace().next()?.parse().ok()?;
+        let elapsed = sys_uptime as u64 - starttime / clk_tck;
+        let cpu_pct = if elapsed > 0 { Some((cpu_total as f64 * 100.0) / (elapsed as f64 * clk_tck as f64)) } else { None };
+
+        // RSS from /proc/{pid}/statm field 1 (pages)
+        let statm = std::fs::read_to_string(format!("/proc/{}/statm", pid)).ok()?;
+        let rss_pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+        let mem = Some(rss_pages * 4096);
+
+        let uptime_secs = if elapsed > 0 { Some(elapsed) } else { None };
+        Some((cpu_pct, mem, uptime_secs))
     }
 
     fn detect_installed(&self) -> bool {

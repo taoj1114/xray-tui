@@ -1,5 +1,6 @@
 use ratatui::{Frame, layout::{Layout, Constraint, Rect}, style::{Color, Style}, text::{Line, Span}, widgets::{Block, Borders, Paragraph}};
 use crossterm::event::{KeyEvent, KeyCode, KeyModifiers};
+use xray_model;
 use crate::{App, Action, InputMode};
 use super::state::{InboundWizardState, WizardStep, WizardFieldType};
 use super::templates::InboundTemplate;
@@ -19,13 +20,16 @@ pub fn handle_key(key: KeyEvent, app: &mut App, wiz: &mut InboundWizardState) ->
             if wiz.current_step == WizardStep::Basic { return Some(Action::PopScreen); }
             wiz.prev_step(); return None;
         }
-        KeyCode::Right if key.modifiers.is_empty() => { wiz.next_step(); return None; }
+        KeyCode::Right if key.modifiers.is_empty() => { if let Some(err) = wiz.next_step() { wiz.error_msg = Some(format!("Validation: {}", err)); } return None; }
         KeyCode::Left if key.modifiers.is_empty() => { wiz.prev_step(); return None; }
         KeyCode::Up => return handle_dropdown_nav(wiz, false),
         KeyCode::Down => return handle_dropdown_nav(wiz, true),
         KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             if let Some(f) = wiz.fields.iter_mut().find(|f| f.label == "UUID") { f.value = uuid::Uuid::new_v4().to_string(); }
             return None;
+        }
+        KeyCode::Char('k') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            return Some(Action::GenerateRealityKeys);
         }
         KeyCode::Char(c) => {
             if let Some(f) = wiz.fields.get_mut(wiz.focused) { if f.field_type == WizardFieldType::TextInput { f.value.push(c); app.mode = InputMode::Editing; } }
@@ -84,7 +88,7 @@ fn handle_dropdown_nav(wiz: &mut InboundWizardState, down: bool) -> Option<Actio
 
 // ─── Render ───────────────────────────────────────────────────────
 
-pub fn render(f: &mut Frame, area: Rect, _app: &App, wiz: &InboundWizardState) {
+pub fn render(f: &mut Frame, area: Rect, app: &App, wiz: &InboundWizardState) {
     let step_names = ["Template", "Basic", "Transport", "Sniffing", "Security", "Users", "Confirm"];
     let step_idx = wiz.current_step.clone() as usize;
     let title = format!("{} Inbound — Step {}/6: {}", if wiz.edit_index.is_some() { "Edit" } else { "New" }, step_idx, step_names[step_idx]);
@@ -92,10 +96,13 @@ pub fn render(f: &mut Frame, area: Rect, _app: &App, wiz: &InboundWizardState) {
     if wiz.current_step == WizardStep::Template { render_template_selector(f, area, wiz); return; }
     if wiz.current_step == WizardStep::Confirm { render_confirm(f, area, &title, wiz); return; }
 
-    let form_h = (wiz.fields.len() + 4) as u16;
+    let form_h = (wiz.fields.len() + 4 + if wiz.error_msg.is_some() { 1 } else { 0 }) as u16;
     let chunks = Layout::vertical([Constraint::Length(form_h), Constraint::Min(1)]).split(area);
 
-    let field_lines: Vec<Line> = wiz.fields.iter().enumerate().map(|(i, fld)| {
+    let mut field_lines: Vec<Line> = if let Some(ref err) = wiz.error_msg {
+        vec![Line::from(Span::styled(format!(" ⚠ {}", err), Style::default().fg(Color::Red)))]
+    } else { vec![] };
+    field_lines.extend(wiz.fields.iter().enumerate().map(|(i, fld)| {
         let is_focused = i == wiz.focused;
         let (ind, val) = match fld.field_type {
             WizardFieldType::Dropdown => {
@@ -111,7 +118,7 @@ pub fn render(f: &mut Frame, area: Rect, _app: &App, wiz: &InboundWizardState) {
             _ => (">".into(), Span::raw(&fld.value)),
         };
         Line::from(vec![Span::raw(ind), if fld.field_type != WizardFieldType::Toggle { Span::raw(format!("{}:  ", fld.label)) } else { Span::raw("") }, val])
-    }).collect();
+    }).collect::<Vec<_>>());
     f.render_widget(Paragraph::new(field_lines).block(Block::default().borders(Borders::ALL).title(title)), chunks[0]);
 
     for (i, fld) in wiz.fields.iter().enumerate() {
@@ -124,7 +131,17 @@ pub fn render(f: &mut Frame, area: Rect, _app: &App, wiz: &InboundWizardState) {
             f.render_widget(Paragraph::new(items).block(Block::default().borders(Borders::ALL).style(Style::default().bg(Color::Rgb(20, 20, 30)))), pop);
         }
     }
-    f.render_widget(Paragraph::new(vec![Line::from(Span::styled("←→ step  Tab field  Enter confirm/open  Esc back/close  ^G new UUID", Style::default().fg(Color::DarkGray)))]), chunks[1]);
+    f.render_widget(Paragraph::new(vec![Line::from(Span::styled("←→ step  Tab field  Enter confirm/open  Esc back/close  ^G new UUID  ^K gen Reality keys", Style::default().fg(Color::DarkGray)))]), chunks[1]);
+
+    // If on Security step, show available certs
+    if wiz.current_step == WizardStep::Security && !app.certificates.is_empty() && wiz.builder.security == xray_model::StreamSecurity::Tls {
+        let cert_y = chunks[0].y + chunks[0].height;
+        let cert_lines: Vec<Line> = std::iter::once(Line::from(Span::styled("  Available certs:", Style::default().fg(Color::Cyan))))
+            .chain(app.certificates.iter().map(|c| Line::from(Span::styled(format!("    {} → cert:{}, key:{}", c.domain, c.cert_path, c.key_path), Style::default().fg(Color::DarkGray)))))
+            .collect();
+        let cert_len = cert_lines.len() as u16;
+        f.render_widget(Paragraph::new(cert_lines), Rect::new(chunks[0].x, cert_y, area.width, cert_len));
+    }
 }
 
 fn render_confirm(f: &mut Frame, area: Rect, title: &str, wiz: &InboundWizardState) {

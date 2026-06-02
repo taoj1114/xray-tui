@@ -7,6 +7,7 @@ const ITEMS: &[(&str, &str)] = &[
     ("Start Xray",       "Start the Xray service via systemd"),
     ("Restart Xray",     "Reload config & restart service"),
     ("Stop Xray",        "Stop the running Xray service"),
+    ("Uninstall Xray",   "Stop service, remove binary, config & systemd unit"),
 ];
 
 pub fn handle_key(key: KeyEvent, app: &mut App) -> Option<Action> {
@@ -18,6 +19,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> Option<Action> {
             1 => Some(Action::StartXray),
             2 => Some(Action::RestartXray),
             3 => Some(Action::StopXray),
+            4 => Some(Action::UninstallXray),
             _ => None,
         },
         _ => None,
@@ -26,7 +28,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> Option<Action> {
 
 pub fn render(f: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default().direction(Direction::Vertical)
-        .constraints([Constraint::Length(7), Constraint::Min(1)]).split(area);
+        .constraints([Constraint::Length(8), Constraint::Min(1)]).split(area);
 
     let status = app.xray_status.clone();
     let mut lines = vec![
@@ -40,8 +42,12 @@ pub fn render(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled("✖ Not installed", Style::default().fg(Color::Red))
             },
         ]),
-        Line::from(format!("PID:     {}", status.pid.map(|p| p.to_string()).unwrap_or_else(|| "---".into()))),
+        Line::from(format!("PID:     {}", status.pid.map(|p|p.to_string()).unwrap_or_else(||"---".into()))),
         Line::from(format!("Version: {}", status.version.as_deref().unwrap_or("(not found)"))),
+        Line::from(format!("CPU:     {:.1}%  │  Mem: {} MB  │  Up: {}m",
+            status.cpu_percent.unwrap_or(0.0),
+            status.memory_bytes.map(|b| b / 1048576).unwrap_or(0),
+            status.uptime_seconds.map(|s| s / 60).unwrap_or(0))),
         Line::from(format!("Inbounds: {}  │  Rules: {}  │  Certs: {}", app.inbounds.len(), app.routing_rules.len(), app.certificates.len())),
     ];
     if !status.is_installed {
