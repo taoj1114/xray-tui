@@ -45,7 +45,7 @@ pub enum Action {
     SaveRouting(Vec<RoutingRule>), RestartXray, StartXray, StopXray,
     InstallXray, UninstallXray, InstallSystemd,
     ExportSubscription, UpdateSettings(GlobalSettings), ShowMessage(String),
-    IssueCertWithMethod { domain: String, method: String, webroot: Option<String> },
+    IssueCertWithMethod { domain: String, method: String, webroot: Option<String>, cf_email: Option<String>, cf_key: Option<String> },
     ToggleInbound(usize),
     SaveUser { inbound_idx: usize, user_idx: usize, proto: String, labels: Vec<String>, values: Vec<String>, is_new: bool },
     GenerateRealityKeys,
@@ -354,10 +354,9 @@ impl App {
                     Err(e) => self.show_msg(&format!("Key gen failed: {}", e)),
                 }
             }
-            Action::IssueCertWithMethod { domain, method, webroot } => {
-                match xray_services::AcmeService::issue_cert(&domain, &method, webroot.as_deref()) {
+            Action::IssueCertWithMethod { domain, method, webroot, cf_email, cf_key } => {
+                match xray_services::AcmeService::issue_cert(&domain, &method, webroot.as_deref(), cf_email.as_deref(), cf_key.as_deref()) {
                     Ok(_) => {
-                        let path = format!("/etc/xray/certs/{}/fullchain.pem", domain);
                         self.certificates.push(CertInfo {
                             domain: domain.clone(),
                             cert_path: format!("/etc/xray/certs/{}/fullchain.pem", domain),

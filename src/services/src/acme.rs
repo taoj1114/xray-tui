@@ -15,37 +15,48 @@ impl AcmeService {
             .args(args)
             .output()
             .map_err(|e| ServiceError::Acme(format!("Failed to run acme.sh: {}", e)))?;
-
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let combined = format!("{}{}", stdout, stderr);
-
         if !output.status.success() {
             return Err(ServiceError::Acme(format!("acme.sh failed:\n{}", combined)));
         }
         Ok(combined)
     }
 
-    pub fn issue_cert(domain: &str, method: &str, webroot: Option<&str>) -> Result<(), ServiceError> {
+    pub fn issue_cert(
+        domain: &str,
+        method: &str,
+        webroot: Option<&str>,
+        cf_email: Option<&str>,
+        cf_key: Option<&str>,
+    ) -> Result<(), ServiceError> {
         let mut args = vec!["--issue", "-d", domain];
 
         match method {
-            "http" => {
+            "webroot" => {
                 args.push("--webroot");
                 args.push(webroot.unwrap_or("/var/www/html"));
             }
             "alpn" => {
                 args.push("--alpn");
             }
-            "dns" => {
+            "dns_cf" => {
                 args.push("--dns");
                 args.push("dns_cf");
+                // Export CF credentials as env vars for acme.sh
+                if let Some(email) = cf_email {
+                    std::env::set_var("CF_Email", email);
+                }
+                if let Some(key) = cf_key {
+                    std::env::set_var("CF_Key", key);
+                }
             }
             _ => return Err(ServiceError::Acme(format!("Unknown method: {}", method))),
         }
 
         let output = Self::run_acme(&args)?;
-        if output.contains("Certificate success") || output.contains("Cert success") {
+        if output.contains("Certificate success") || output.contains("Cert success") || output.contains("Domains not changed") {
             Ok(())
         } else {
             Err(ServiceError::Acme(format!("Cert issue failed:\n{}", output)))
@@ -72,48 +83,22 @@ impl AcmeService {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
 
         for line in output.lines() {
-            if line.contains("Main_Domain") {
-                started = true;
-                continue;
-            }
+            if line.contains("Main_Domain") { started = true; continue; }
             if !started { continue; }
             if line.trim().is_empty() { break; }
-
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.is_empty() { continue; }
-
             let domain = parts[0].trim_matches('*').trim_matches('.').to_string();
             let acme_dir = format!("{}/.acme.sh/{}", home, domain);
             let cert_path = format!("{}/fullchain.cer", acme_dir);
             let key_path = format!("{}/{}.key", acme_dir, domain);
-
-            // Columns after domain vary, parse dates from last columns
-            let issued_at = parts.iter()
-                .rev()
-                .nth(1)
-                .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%dT00:00:00Z").ok())
-                .or_else(|| parts.iter().rev().nth(1)
-                    .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()))
-                .unwrap_or_else(|| NaiveDate::from_ymd_opt(2020, 1, 1).unwrap());
-            let expires_at = parts.iter()
-                .last()
-                .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%dT00:00:00Z").ok())
-                .or_else(|| parts.last()
-                    .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()))
-                .unwrap_or_else(|| NaiveDate::from_ymd_opt(2020, 1, 1).unwrap());
-
+            let issued_at = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+            let expires_at = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
             certs.push(CertInfo {
-                domain,
-                issued_at,
-                expires_at,
-                cert_path,
-                key_path,
-                issuer: "Let's Encrypt".into(),
-                auto_renew: false,
-                renew_command: None,
+                domain, issued_at, expires_at, cert_path, key_path,
+                issuer: "Let's Encrypt".into(), auto_renew: false, renew_command: None,
             });
         }
-
         Ok(certs)
     }
 }
@@ -121,7 +106,6 @@ impl AcmeService {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn test_parse_cert_list() {
         let output = "Main_Domain  KeyLength  SAN_Domains  Created  RenewDate\n\
