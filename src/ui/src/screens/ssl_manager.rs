@@ -7,16 +7,13 @@ pub struct SslEditState {
     pub domain: String,
     pub method_idx: usize,   // 0=webroot, 1=alpn, 2=dns_cf
     pub webroot: String,
-    pub cf_email: String,
-    pub cf_key: String,
-    pub field: usize,        // 0=domain, 1=method, 2=webroot/cf_email, 3=cf_key
-    pub n_fields: usize,
+    pub field: usize,        // 0=domain, 1=method, 2=webroot (only for webroot)
 }
 
-const DNS_METHODS: &[(&str, &str, usize)] = &[
-    ("webroot", "/var/www/html", 2),  // 2 fields: domain, method, webroot
-    ("alpn",    "standalone",    1),  // 1 field:  domain, method
-    ("dns_cf",  "Cloudflare API",3),  // 3 fields: domain, method, cf_email, cf_key
+const DNS_METHODS: &[(&str, &str)] = &[
+    ("webroot", "Local webroot"),
+    ("alpn",    "Standalone ALPN"),
+    ("dns_cf",  "Cloudflare DNS (uses Settings)"),
 ];
 
 const COMMANDS: &[(&str, &str)] = &[
@@ -33,62 +30,48 @@ pub fn handle_key(key: KeyEvent, app: &mut App, selected: &mut usize, edit: &mut
         match key.code {
             KeyCode::Esc => { let _ = edit.take(); return None; }
             KeyCode::Tab => {
-                // cycle between field and method selector
                 let method_name = DNS_METHODS[st.method_idx].0;
+                let n_fields = if method_name == "webroot" { 3 } else { 2 };
                 if st.field == 1 {
-                    // on method field, cycle method
                     st.method_idx = (st.method_idx + 1) % DNS_METHODS.len();
-                    st.n_fields = DNS_METHODS[st.method_idx].2;
-                    if st.field + 1 >= st.n_fields { st.field = 0; }
+                    if st.field >= n_fields { st.field = 0; }
                 } else {
-                    st.field = (st.field + 1) % st.n_fields;
+                    st.field = (st.field + 1) % n_fields;
                 }
                 return None;
             }
             KeyCode::BackTab => {
-                if st.field == 1 {
-                    st.method_idx = (st.method_idx + DNS_METHODS.len() - 1) % DNS_METHODS.len();
-                    st.n_fields = DNS_METHODS[st.method_idx].2;
-                    if st.field >= st.n_fields { st.field = 0; }
-                } else {
-                    st.field = (st.field + st.n_fields - 1) % st.n_fields;
-                }
+                st.method_idx = (st.method_idx + DNS_METHODS.len() - 1) % DNS_METHODS.len();
+                if st.field >= if DNS_METHODS[st.method_idx].0 == "webroot" { 3 } else { 2 } { st.field = 0; }
                 return None;
             }
             KeyCode::Enter => {
-                let domain = st.domain.clone();
                 let method = DNS_METHODS[st.method_idx].0.to_string();
+                // Check CF credentials pre-configured
+                if method == "dns_cf" {
+                    if app.settings.cf_email.is_none() || app.settings.cf_token.is_none() {
+                        let _ = edit.take();
+                        return Some(Action::ShowMessage("Cloudflare credentials not set. Go to Settings → Edit CF Email / Token first.".into()));
+                    }
+                }
+                let domain = st.domain.clone();
                 let webroot = if method == "webroot" { Some(st.webroot.clone()) } else { None };
-                let cf_email = if method == "dns_cf" && !st.cf_email.is_empty() { Some(st.cf_email.clone()) } else { None };
-                let cf_key = if method == "dns_cf" && !st.cf_key.is_empty() { Some(st.cf_key.clone()) } else { None };
-                let action = Action::IssueCertWithMethod { domain, method, webroot, cf_email, cf_key };
+                let cf_email = if method == "dns_cf" { app.settings.cf_email.clone() } else { None };
+                let cf_token = if method == "dns_cf" { app.settings.cf_token.clone() } else { None };
+                let action = Action::IssueCertWithMethod { domain, method, webroot, cf_email, cf_key: cf_token };
                 let _ = edit.take();
                 return Some(action);
             }
-            KeyCode::Up if st.field == 1 => { st.method_idx = (st.method_idx + DNS_METHODS.len() - 1) % DNS_METHODS.len(); st.n_fields = DNS_METHODS[st.method_idx].2; if st.field >= st.n_fields { st.field = 0; } return None; }
-            KeyCode::Down if st.field == 1 => { st.method_idx = (st.method_idx + 1) % DNS_METHODS.len(); st.n_fields = DNS_METHODS[st.method_idx].2; if st.field >= st.n_fields { st.field = 0; } return None; }
+            KeyCode::Up if st.field == 1 => { st.method_idx = (st.method_idx + DNS_METHODS.len() - 1) % DNS_METHODS.len(); return None; }
+            KeyCode::Down if st.field == 1 => { st.method_idx = (st.method_idx + 1) % DNS_METHODS.len(); return None; }
             KeyCode::Char(c) => {
-                match st.field {
-                    0 => st.domain.push(c),
-                    2 => {
-                        if DNS_METHODS[st.method_idx].0 == "webroot" { st.webroot.push(c); }
-                        else if DNS_METHODS[st.method_idx].0 == "dns_cf" { st.cf_email.push(c); }
-                    }
-                    3 => { st.cf_key.push(c); }
-                    _ => {}
-                }
+                if st.field == 0 { st.domain.push(c); }
+                else if st.field == 2 && DNS_METHODS[st.method_idx].0 == "webroot" { st.webroot.push(c); }
                 return None;
             }
             KeyCode::Backspace => {
-                match st.field {
-                    0 => { st.domain.pop(); }
-                    2 => {
-                        if DNS_METHODS[st.method_idx].0 == "webroot" { st.webroot.pop(); }
-                        else if DNS_METHODS[st.method_idx].0 == "dns_cf" { st.cf_email.pop(); }
-                    }
-                    3 => { st.cf_key.pop(); }
-                    _ => {}
-                }
+                if st.field == 0 { st.domain.pop(); }
+                else if st.field == 2 && DNS_METHODS[st.method_idx].0 == "webroot" { st.webroot.pop(); }
                 return None;
             }
             _ => return None,
@@ -106,7 +89,9 @@ pub fn handle_key(key: KeyEvent, app: &mut App, selected: &mut usize, edit: &mut
                 if !installed {
                     return Some(Action::ShowMessage("acme.sh not found. Install: curl https://get.acme.sh | sh".into()));
                 }
-                *edit = Some(SslEditState { domain: String::new(), method_idx: 0, webroot: "/var/www/html".into(), cf_email: String::new(), cf_key: String::new(), field: 0, n_fields: 2 });
+                // Check CF credentials if dns_cf is default (index 2)
+                let cf_ok = app.settings.cf_email.is_some() && app.settings.cf_token.is_some();
+                *edit = Some(SslEditState { domain: String::new(), method_idx: if cf_ok { 2 } else { 0 }, webroot: "/var/www/html".into(), field: 0 });
                 None
             }
             1 if len > 0 => { let d = app.certificates[*selected].domain.clone(); match xray_services::AcmeService::renew_cert(&d) { Ok(_) => Some(Action::ShowMessage("Renewed".into())), Err(e) => Some(Action::ShowMessage(format!("Err:{}",e))) } }
@@ -119,7 +104,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App, selected: &mut usize, edit: &mut
 }
 
 pub fn render(f: &mut Frame, area: Rect, app: &App, selected: usize, edit: &Option<SslEditState>) {
-    let edit_height = if edit.is_some() { 8 } else { 0 };
+    let edit_height = if edit.is_some() { 7 } else { 0 };
     let chunks = Layout::vertical([
         Constraint::Length(3 + app.certificates.len().max(1) as u16),
         Constraint::Min(if edit_height > 0 { 6 } else { 4 }),
@@ -140,7 +125,17 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, selected: usize, edit: &Opti
         let method_name = DNS_METHODS[st.method_idx].0;
         let d_focus = st.field == 0;
         let m_focus = st.field == 1;
-        let mut lines: Vec<Line> = vec![
+
+        let cf_configured = app.settings.cf_email.is_some() && app.settings.cf_token.is_some();
+        let cf_hint = if method_name == "dns_cf" && !cf_configured {
+            Line::from(Span::styled("  ⚠ CF credentials not set — go to Settings first", Style::default().fg(Color::Red)))
+        } else if method_name == "dns_cf" {
+            Line::from(Span::styled(format!("  CF configured: {} / {}", app.settings.cf_email.as_deref().unwrap_or("?"), if app.settings.cf_token.is_some() { "●●●●" } else { "?" }), Style::default().fg(Color::Green)))
+        } else {
+            Line::from("")
+        };
+
+        let mut lines = vec![
             Line::from(vec![
                 Span::raw(if d_focus { "▶ " } else { "  " }),
                 Span::raw("Domain: "),
@@ -152,33 +147,16 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, selected: usize, edit: &Opti
                 Span::styled(format!(" {} ", method_name), if m_focus { Style::default().fg(Color::Black).bg(Color::Cyan) } else { Style::default() }),
                 Span::styled(" (↑↓ cycle)", Style::default().fg(Color::DarkGray)),
             ]),
+            cf_hint,
         ];
 
-        match method_name {
-            "webroot" => {
-                let w_focus = st.field == 2;
-                lines.push(Line::from(vec![
-                    Span::raw(if w_focus { "▶ " } else { "  " }),
-                    Span::raw("WebRoot: "),
-                    Span::styled(format!("{}_", st.webroot), if w_focus { Style::default().fg(Color::Yellow) } else { Style::default() }),
-                ]));
-            }
-            "dns_cf" => {
-                let e_focus = st.field == 2;
-                let k_focus = st.field == 3;
-                lines.push(Line::from(vec![
-                    Span::raw(if e_focus { "▶ " } else { "  " }),
-                    Span::raw("CF Email: "),
-                    Span::styled(format!("{}_", st.cf_email), if e_focus { Style::default().fg(Color::Yellow) } else { Style::default() }),
-                ]));
-                lines.push(Line::from(vec![
-                    Span::raw(if k_focus { "▶ " } else { "  " }),
-                    Span::raw("CF Key:   "),
-                    Span::styled(format!("{}_", if st.cf_key.is_empty() { "" } else { "●●●●●●" }), if k_focus { Style::default().fg(Color::Yellow) } else { Style::default() }),
-                    Span::styled(" (Global API Key)" , Style::default().fg(Color::DarkGray)),
-                ]));
-            }
-            _ => {}
+        if method_name == "webroot" {
+            let w_focus = st.field == 2;
+            lines.push(Line::from(vec![
+                Span::raw(if w_focus { "▶ " } else { "  " }),
+                Span::raw("WebRoot: "),
+                Span::styled(format!("{}_", st.webroot), if w_focus { Style::default().fg(Color::Yellow) } else { Style::default() }),
+            ]));
         }
         lines
     } else {

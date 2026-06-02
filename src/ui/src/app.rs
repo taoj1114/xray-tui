@@ -7,7 +7,7 @@ use xray_model::*;
 use xray_services::*;
 
 use crate::screens;
-use crate::screens::{InboundWizardState, LogViewerState, RoutingEditMode, UserEditMode, SslEditState};
+use crate::screens::{InboundWizardState, LogViewerState, RoutingEditMode, UserEditMode, SslEditState, SettingsEditState};
 
 #[derive(Debug, Clone)]
 pub enum Screen {
@@ -18,7 +18,7 @@ pub enum Screen {
     RoutingEditor { selected: usize, editing: Option<RoutingEditMode> },
     SslManagement { selected: usize, editing: Option<screens::ssl_manager::SslEditState> },
     LogViewer(LogViewerState),
-    Settings,
+    Settings(Option<SettingsEditState>),
     ConfirmDialog { message: String, on_confirm: ConfirmedAction },
     ShareExport { content: String },
 }
@@ -166,7 +166,7 @@ impl App {
     fn switch_tab(&mut self, reverse: bool) {
         let current = match &self.current_screen {
             Screen::Dashboard => 0, Screen::InboundList { .. } => 1, Screen::RoutingEditor { .. } => 2,
-            Screen::SslManagement { .. } => 3, Screen::LogViewer(_) => 4, Screen::Settings => 5,
+            Screen::SslManagement { .. } => 3, Screen::LogViewer(_) => 4, Screen::Settings(_) => 5,
             _ => return,
         };
         let next = if reverse { (current + 5) % 6 } else { (current + 1) % 6 };
@@ -177,7 +177,7 @@ impl App {
             0 => Screen::Dashboard, 1 => Screen::InboundList { selected: 0 },
             2 => Screen::RoutingEditor { selected: 0, editing: None },
             3 => Screen::SslManagement { selected: 0, editing: None },
-            4 => Screen::LogViewer(LogViewerState::default()), 5 => Screen::Settings,
+            4 => Screen::LogViewer(LogViewerState::default()), 5 => Screen::Settings(None),
             _ => Screen::Dashboard,
         };
     }
@@ -244,7 +244,12 @@ impl App {
                 result
             }
             Screen::LogViewer(ref mut state) => screens::log_viewer::handle_key(key, self, state),
-            Screen::Settings => screens::settings_page::handle_key(key, self),
+            Screen::Settings(editing) => {
+                let mut edit = editing.take();
+                let result = screens::settings_page::handle_key(key, self, &mut edit);
+                if edit.is_some() { *editing = edit; }
+                result
+            }
             _ => None,
         };
         self.current_screen = screen;
@@ -372,7 +377,7 @@ impl App {
                     Err(e) => self.show_msg(&format!("Issue failed: {}", e)),
                 }
             }
-            Action::UpdateSettings(s) => { self.settings = s; self.show_msg("Saved"); self.current_screen = Screen::Dashboard; }
+            Action::UpdateSettings(s) => { self.settings = s; self.show_msg("Saved"); }
             Action::ShowMessage(msg) => self.show_msg(&msg),
             Action::Quit => self.should_quit = true,
         }
@@ -480,7 +485,7 @@ fn render_top_bar(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_tab_bar(f: &mut Frame, area: Rect, app: &App) {
     let tnames = ["Dashboard", "Inbounds", "Routing", "SSL", "Logs", "Settings"];
-    let cur = match &app.current_screen { Screen::Dashboard=>0, Screen::InboundList{..}=>1, Screen::RoutingEditor{..}=>2, Screen::SslManagement{..}=>3, Screen::LogViewer(_)=>4, Screen::Settings=>5, _=>0 };
+    let cur = match &app.current_screen { Screen::Dashboard=>0, Screen::InboundList{..}=>1, Screen::RoutingEditor{..}=>2, Screen::SslManagement{..}=>3, Screen::LogViewer(_)=>4, Screen::Settings(_)=>5, _=>0 };
     let tabs: Vec<Span> = tnames.iter().enumerate().map(|(i,n)| if i==cur { Span::styled(format!(" {} ",n), Style::default().fg(Color::Black).bg(Color::Cyan)) } else { Span::styled(format!(" {} ",n), Style::default().fg(Color::Gray)) }).collect();
     f.render_widget(Tabs::new(tabs).block(Block::default().style(Style::default().bg(Color::Rgb(25, 25, 35)))), area);
 }
@@ -494,7 +499,7 @@ fn render_content(f: &mut Frame, area: Rect, app: &App) {
         Screen::RoutingEditor { selected: s, editing: e } => screens::routing_editor::render(f, area, app, *s, e.as_ref()),
         Screen::SslManagement { selected: s, editing } => screens::ssl_manager::render(f, area, app, *s, editing),
         Screen::LogViewer(ref st) => screens::log_viewer::render(f, area, st, app.command_cursor),
-        Screen::Settings => screens::settings_page::render(f, area, app),
+        Screen::Settings(editing) => screens::settings_page::render(f, area, app, editing),
         Screen::ConfirmDialog { message, .. } => screens::confirm::render(f, area, message),
         Screen::ShareExport { content } => screens::share_export::render(f, area, content),
     }
@@ -509,7 +514,7 @@ fn render_help_bar(f: &mut Frame, area: Rect, app: &App) {
         Screen::RoutingEditor{..}=>"Esc:Back  ↑↓:Command  ←→:Rule  Enter:Execute",
         Screen::SslManagement{..}=>"Esc:Back  ↑↓:Command  ←→:Cert  Enter:Execute",
         Screen::LogViewer(_)=>"Esc:Back  ↑↓:Scroll  ←→:Commands  Enter:Execute",
-        Screen::Settings=>"Esc:Back  Tab:Field  s:LogLevel",
+        Screen::Settings(_) =>"Esc:Back  ↑↓:Command  Enter:Edit",
         Screen::ConfirmDialog{..}=>"y:Yes  n/Esc:No",
         Screen::ShareExport{..}=>"Esc:Back  c:Copy",
     };

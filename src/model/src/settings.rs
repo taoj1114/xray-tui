@@ -7,6 +7,9 @@ pub struct GlobalSettings {
     pub log_level: String,
     pub server_public_ip: Option<String>,
     pub state_dir: String,
+    pub cf_email: Option<String>,
+    pub cf_token: Option<String>,
+    pub cf_zone_id: Option<String>,
 }
 
 impl Default for GlobalSettings {
@@ -17,6 +20,9 @@ impl Default for GlobalSettings {
             log_level: "warning".into(),
             server_public_ip: None,
             state_dir: dirs_like_path(),
+            cf_email: None,
+            cf_token: None,
+            cf_zone_id: None,
         }
     }
 }
