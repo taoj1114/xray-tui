@@ -1,0 +1,15 @@
+[package]
+name = "xray-ui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+xray-model = { path = "../model" }
+xray-services = { path = "../services" }
+ratatui = "0.29"
+crossterm = "0.28"
+duct = "0.13"
+uuid = { version = "1", features = ["v4"] }
+serde_json = "1"
+anyhow = "1"
+chrono = "0.4"

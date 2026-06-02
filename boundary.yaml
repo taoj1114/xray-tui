@@ -1,0 +1,181 @@
+project:
+  name: xray-tui
+  description: |
+    Xray 代理服务端管理 TUI 工具。创建和管理 VLESS/VMess/Trojan/Shadowsocks/HTTP/SOCKS
+    入站配置、管理 SSL 证书、运行和监控 Xray 服务。
+
+modules:
+  - name: xray-model
+    responsibility: |
+      Xray 配置完整数据模型。定义所有 serde 结构体、枚举和多态序列化逻辑。
+    path: src/model
+    covers: [REQ-001, REQ-009, REQ-013]
+    structs:
+      - name: XrayConfig
+        description: Xray 顶层配置结构
+        fields: []
+      - name: InboundConfig
+        description: 入站配置
+        fields: []
+      - name: ProtocolSettings
+        description: 按协议多态的 settings 枚举 (#[serde(untagged)])
+        fields: []
+      - name: StreamSettings
+        description: 流传输设置
+        fields: []
+      - name: RoutingConfig
+        description: 路由配置
+        fields: []
+      - name: RoutingRule
+        description: 单条路由规则
+        fields: []
+      - name: TlsSettings
+        description: TLS 加密设置
+        fields: []
+      - name: RealitySettings
+        description: Reality 加密设置
+        fields: []
+      - name: SniffingConfig
+        description: 流量嗅探配置
+        fields: []
+      - name: CertInfo
+        description: SSL 证书信息
+        fields: []
+      - name: GlobalSettings
+        description: 应用全局设置
+        fields: []
+      - name: XrayStatus
+        description: Xray 运行时状态
+        fields: []
+      - name: StoredInbound
+        description: 持久化的入站元数据（不含敏感信息）
+        fields: []
+    enums:
+      - name: InboundProtocol
+        description: VMess, VLess, Trojan, Shadowsocks, Http, Socks
+        variants: []
+      - name: TransportNetwork
+        description: Tcp, Ws, Grpc, HttpUpgrade, Quic, Kcp, DomainSocket
+        variants: []
+      - name: StreamSecurity
+        description: None, Tls, Reality
+        variants: []
+    errors:
+      - name: ModelError
+        variants: [SerdeError, ValidationError]
+    depends_on: []
+    test_strategy:
+      unit: "每种协议×传输×安全组合序列化为 JSON，与 Xray 官方文档示例对比"
+      integration: "无外部依赖，仅单元测试"
+
+  - name: xray-services
+    responsibility: |
+      核心服务层。Xray 配置读写、systemd 管理、acme.sh 证书管理、订阅链接生成、
+      journalctl 日志采集、状态持久化。
+    path: src/services
+    covers: [REQ-001, REQ-009, REQ-010, REQ-011, REQ-012]
+    structs:
+      - name: XrayService
+        description: Xray 配置生成、写入、校验、Reality 密钥生成
+        fields: []
+      - name: SystemdService
+        description: systemd D-Bus 集成，管理 Xray 服务
+        fields: []
+      - name: AcmeService
+        description: acme.sh 包装，签发/续期/列出证书
+        fields: []
+      - name: Storage
+        description: 应用状态持久化到 JSON 文件
+        fields: []
+      - name: SubscriptionService
+        description: 生成分享链接和批量订阅
+        fields: []
+      - name: JournalService
+        description: journalctl 日志采集
+        fields: []
+    enums:
+      - name: CertIssueMethod
+        description: Http, Alpn, Dns
+        variants: []
+      - name: SystemdUnitState
+        description: Active, Inactive, Failed, NotInstalled
+        variants: []
+    errors:
+      - name: ServiceError
+        variants: [IoError, JsonError, SystemdError, AcmeError, StorageError, SubscriptionError, JournalError]
+    depends_on:
+      - module: xray-model
+        reason: 需要 Xray 配置数据结构生成 JSON
+    test_strategy:
+      unit: "Mock D-Bus 和文件系统，测试各服务逻辑分支"
+      integration: "在真实环境中测试 xray x25519、journalctl 调用"
+
+  - name: xray-ui
+    responsibility: |
+      终端用户界面层。所有屏幕渲染、事件处理、可复用 UI widget。
+    path: src/ui
+    covers: [REQ-002, REQ-003, REQ-004, REQ-005, REQ-006, REQ-007, REQ-008, REQ-012, REQ-014]
+    structs:
+      - name: App
+        description: 全局应用状态持有者
+        fields: []
+      - name: Dropdown
+        description: 下拉选择组件
+        fields: []
+      - name: Toggle
+        description: 开关切换组件
+        fields: []
+      - name: InboundWizardState
+        description: 向导跨步状态
+        fields: []
+      - name: InboundConfigBuilder
+        description: 向导中的配置构建器
+        fields: []
+    enums:
+      - name: Screen
+        description: 屏幕路由枚举（Dashboard, InboundList, InboundWizard, UserManager, RoutingEditor, SslManagement, LogViewer, Settings, ConfirmDialog, ShareExport）
+        variants: []
+      - name: InputMode
+        description: Normal, Editing, Selecting
+        variants: []
+      - name: Action
+        description: 全局消息/动作枚举
+        variants: []
+      - name: ConfirmedAction
+        description: 确认对话框的后续操作
+        variants: []
+      - name: WizardStep
+        description: Basic=1, Transport=2, Sniffing=3, Security=4, Users=5, Confirm=6
+        variants: []
+    errors:
+      - name: UiError
+        variants: [RenderError, InputError]
+    depends_on:
+      - module: xray-model
+        reason: 渲染和编辑 Xray 配置数据
+      - module: xray-services
+        reason: 调用服务层执行实际操作
+    test_strategy:
+      unit: "每个屏幕的 handle_key 和 render 逻辑通过模拟事件测试"
+      integration: "在终端中手动测试所有导航路径和表单交互"
+
+  - name: xray-app
+    responsibility: |
+      应用入口。终端初始化、服务实例创建、主事件循环。
+    path: src
+    covers: [REQ-002, REQ-013]
+    structs: []
+    enums: []
+    errors:
+      - name: AppError
+        variants: [InitError, FatalError]
+    depends_on:
+      - module: xray-model
+        reason: 加载持久化状态
+      - module: xray-services
+        reason: 初始化所有服务
+      - module: xray-ui
+        reason: 启动 UI 循环
+    test_strategy:
+      unit: "测试启动/退出流程正确性"
+      integration: "端到端测试：启动应用、创建配置、导出链接、退出"

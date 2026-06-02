@@ -1,0 +1,196 @@
+project: xray-tui
+requirements:
+  - id: REQ-001
+    title: 配置生成基础架构
+    priority: high
+    description: |
+      定义完整的 Xray 配置数据模型（XrayConfig, InboundConfig, ProtocolSettings,
+      StreamSettings, RoutingConfig, DnsConfig, LogConfig, SniffingConfig），
+      使用 serde 序列化/反序列化。每种协议（VMess/VLESS/Trojan/Shadowsocks/HTTP/SOCKS）
+      有独立的 settings 结构体，通过 #[serde(untagged)] 多态序列化。
+    acceptance:
+      - 每种协议 × 传输 × 安全组合序列化为正确的 Xray JSON 格式
+      - InboundConfig::to_json_value() 输出独立 inbound 片段
+      - XrayConfig::from_inbounds() 生成完整配置文件
+    depends_on: []
+
+  - id: REQ-002
+    title: 终端 UI 框架
+    priority: high
+    description: |
+      基于 ratatui + crossterm 构建 TUI 应用框架。实现屏幕路由（枚举状态机），
+      InputMode 管理（Normal/Editing/Selecting），事件循环（16ms tick），
+      Resize 处理，全局导航栏和帮助栏。
+    acceptance:
+      - 终端初始化/恢复正确
+      - 屏幕切换流畅，Esc 返回上一屏
+      - 窗口 resize 后布局自适应重绘
+      - 全局快捷键（q退出/Tab焦点/Esc返回）始终有效
+    depends_on: []
+
+  - id: REQ-003
+    title: 基础 UI 组件
+    priority: high
+    description: |
+      实现 Dropdown（弹出列表选择）、Toggle（开关切换）、状态栏和帮助栏组件。
+      这些组件被所有屏幕复用。
+    acceptance:
+      - Dropdown: ↑↓导航、Enter确认、Esc关闭，弹出层遮挡下方内容
+      - Toggle: 空格切换 [X]/[ ]，高亮聚焦状态
+      - 状态栏: 显示 Xray 运行状态、CPU/Mem/Uptime
+      - 帮助栏: 动态显示当前屏幕的快捷键
+    depends_on: [REQ-002]
+
+  - id: REQ-004
+    title: Dashboard 概览面板
+    priority: high
+    description: |
+      主屏幕，展示 Xray 运行状态、入站配置概览表、快捷操作入口。
+    acceptance:
+      - 实时显示 Xray 运行状态（Running/Stopped）/ PID / 版本
+      - 入站概览表列出所有配置的关键信息
+      - 有明确导航到各子页面的快捷键提示
+    depends_on: [REQ-002, REQ-003]
+
+  - id: REQ-005
+    title: 入站配置列表
+    priority: high
+    description: |
+      可滚动列表显示所有入站配置，选中行显示详情面板。支持新建、编辑、删除、
+      启用/禁用操作。
+    acceptance:
+      - 表格式列表含 tag/protocol/port/listen/transport/security/status
+      - 上下键滚动选择，自动滚动
+      - 详情面板显示完整配置信息
+      - n 新建进入向导 / e 编辑 / d 删除确认弹层 / Space 启用禁用
+      - u 进入用户管理
+    depends_on: [REQ-002, REQ-003]
+
+  - id: REQ-006
+    title: 入站配置创建向导
+    priority: high
+    description: |
+      6 步向导式创建/编辑入站配置：
+      Step1 Basic (协议/端口/监听/标签)
+      Step2 Transport (传输方式/WS设置/gRPC设置)
+      Step3 Sniffing (流量嗅探开关/类型)
+      Step4 Security (TLS证书/Reality密钥)
+      Step5 Users (按协议变化的用户凭据)
+      Step6 Confirm (JSON预览+保存)
+      每步动态构建字段列表，切换步骤时验证并保存当前步骤数据。
+    acceptance:
+      - 6步流程完整，每步字段根据前面选择动态变化
+      - 字段验证：端口范围、UUID格式、路径/开头、sniffing至少一项
+      - Reality 密钥通过调用 xray x25519 生成
+      - TLS 证书可从已有 SSL 列表选取
+      - JSON 预览正确
+      - 保存时检测端口冲突
+    depends_on: [REQ-001, REQ-003]
+
+  - id: REQ-007
+    title: 用户管理
+    priority: high
+    description: |
+      对已有入站配置进行用户追加/删除操作，支持单用户分享链接导出。
+    acceptance:
+      - 列表显示入站的所有用户及其属性
+      - n 追加新用户（UUID自动生成/密码输入）
+      - d 删除用户并确认
+      - c 复制单用户分享链接
+      - 修改后自动重写 Xray 配置
+    depends_on: [REQ-001, REQ-005]
+
+  - id: REQ-008
+    title: 路由规则管理
+    priority: medium
+    description: |
+      编辑 Xray 路由规则（域名分流、GeoIP、端口、协议匹配），支持排序和预设模板。
+    acceptance:
+      - 列表展示路由规则含匹配条件和目标
+      - n 新建 / e 编辑规则
+      - ↑↓ 移动规则排序
+      - Space 启用/禁用规则
+      - 提供预设模板（国内直连/广告屏蔽/局域网直连）
+      - 保存后生成正确的 routing JSON
+    depends_on: [REQ-001, REQ-003]
+
+  - id: REQ-009
+    title: 订阅链接导出
+    priority: medium
+    description: |
+      生成 vmess://, vless://, trojan://, ss:// 格式的分享链接，
+      支持单个入站和全部入站 Base64 批量导出。
+    acceptance:
+      - vmess:// 格式正确（Base64 JSON）
+      - vless:// 格式正确（URL 参数传递参数）
+      - trojan:// 格式正确
+      - ss:// 格式正确（Base64 userinfo）
+      - 批量导出为 Base64 编码的多行文本
+      - 可复制到剪贴板
+    depends_on: [REQ-001]
+
+  - id: REQ-010
+    title: Xray 服务管理（systemd）
+    priority: high
+    description: |
+      通过 systemd D-Bus 管理 Xray 服务：首次安装 unit 文件、启动、停止、重启、
+      状态查询、进程资源监控。
+    acceptance:
+      - 首次运行时创建 /etc/systemd/system/xray.service 并 enable
+      - start/stop/restart 操作正确
+      - 实时查询 running 状态
+      - 获取 PID/CPU/Memory/Uptime 信息
+      - 权限不足时给出友好提示
+    depends_on: [REQ-001]
+
+  - id: REQ-011
+    title: SSL 证书管理
+    priority: medium
+    description: |
+      通过 acme.sh 管理 Let's Encrypt 证书：签发、续期、列表查看、自动续期。
+    acceptance:
+      - 检查 acme.sh 是否安装
+      - 签发证书支持 HTTP/ALPN/DNS 验证
+      - 列表展示证书域名/日期/状态
+      - 续期操作
+      - 切换自动续期
+      - 证书信息可供向导 TLS 步骤选取
+    depends_on: [REQ-003]
+
+  - id: REQ-012
+    title: 日志查看器
+    priority: low
+    description: |
+      通过 journalctl 查看 Xray 的运行日志，支持级别过滤、关键字搜索、自动滚动。
+    acceptance:
+      - 调用 journalctl -fu xray 获取日志
+      - 可按日志级别过滤（debug/info/warn/err）
+      - 关键字过滤搜索
+      - 自动滚动/手动滚动切换
+      - 翻页支持
+    depends_on: [REQ-002, REQ-003]
+
+  - id: REQ-013
+    title: 应用持久化存储
+    priority: medium
+    description: |
+      将应用状态（inbounds元数据、certificates、routing_rules、settings）
+      持久化到 ~/.config/xray-tui/state.json，启动时恢复。不存储敏感信息。
+    acceptance:
+      - 退出时自动保存
+      - 启动时自动加载
+      - 不存在配置文件时使用默认值
+      - 不存储密码/私钥/UUID
+    depends_on: [REQ-001]
+
+  - id: REQ-014
+    title: 设置页面
+    priority: low
+    description: |
+      配置应用全局设置：Xray 路径、config 路径、日志级别、服务器公网 IP。
+    acceptance:
+      - 可配置 Xray 二进制路径
+      - 可配置 config.json 输出路径
+      - 可配置日志级别
+      - 可配置服务器公网 IP（用于订阅链接）
+    depends_on: [REQ-002, REQ-003]

@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "src/model",
+    "src/services",
+    "src/ui",
+    "src",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"

@@ -1,0 +1,16 @@
+[package]
+name = "xray-app"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "xray-tui"
+path = "main.rs"
+
+[dependencies]
+xray-model = { path = "model" }
+xray-services = { path = "services" }
+xray-ui = { path = "ui" }
+anyhow = "1"
+crossterm = "0.28"
+ratatui = "0.29"
