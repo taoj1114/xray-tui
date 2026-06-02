@@ -7,16 +7,16 @@ use xray_model::*;
 use xray_services::*;
 
 use crate::screens;
-use crate::screens::*;
+use crate::screens::{InboundWizardState, LogViewerState, RoutingEditMode, UserEditMode, SslEditState};
 
 #[derive(Debug, Clone)]
 pub enum Screen {
     Dashboard,
     InboundList { selected: usize },
     InboundWizard(InboundWizardState),
-    UserManager { inbound_idx: usize, selected: usize },
+    UserManager { inbound_idx: usize, selected: usize, editing: Option<UserEditMode> },
     RoutingEditor { selected: usize, editing: Option<RoutingEditMode> },
-    SslManagement { selected: usize },
+    SslManagement { selected: usize, editing: Option<screens::ssl_manager::SslEditState> },
     LogViewer(LogViewerState),
     Settings,
     ConfirmDialog { message: String, on_confirm: ConfirmedAction },
@@ -45,7 +45,10 @@ pub enum Action {
     SaveRouting(Vec<RoutingRule>), RestartXray, StartXray, StopXray,
     InstallXray, InstallSystemd,
     ExportSubscription, UpdateSettings(GlobalSettings), ShowMessage(String),
-    ToggleInbound(usize), Quit,
+    IssueCert(String),
+    ToggleInbound(usize),
+    SaveUser { inbound_idx: usize, user_idx: usize, proto: String, labels: Vec<String>, values: Vec<String>, is_new: bool },
+    Quit,
 }
 
 #[derive(Debug, Clone)]
@@ -170,7 +173,7 @@ impl App {
         self.current_screen = match next {
             0 => Screen::Dashboard, 1 => Screen::InboundList { selected: 0 },
             2 => Screen::RoutingEditor { selected: 0, editing: None },
-            3 => Screen::SslManagement { selected: 0 },
+            3 => Screen::SslManagement { selected: 0, editing: None },
             4 => Screen::LogViewer(LogViewerState::default()), 5 => Screen::Settings,
             _ => Screen::Dashboard,
         };
@@ -224,9 +227,19 @@ impl App {
             Screen::Dashboard => screens::dashboard::handle_key(key, self),
             Screen::InboundList { selected } => screens::inbound_list::handle_key(key, self, selected),
             Screen::InboundWizard(ref mut wiz) => screens::wizard::handle_key(key, self, wiz),
-            Screen::UserManager { selected, inbound_idx } => screens::user_manager::handle_key(key, self, selected, *inbound_idx),
+            Screen::UserManager { selected, inbound_idx, editing } => {
+                let mut edit = editing.take();
+                let result = screens::user_manager::handle_key(key, self, selected, *inbound_idx, &mut edit);
+                if edit.is_some() { *editing = edit; }
+                result
+            }
             Screen::RoutingEditor { selected, editing } => screens::routing_editor::handle_key(key, self, selected, editing),
-            Screen::SslManagement { selected } => screens::ssl_manager::handle_key(key, self, selected),
+            Screen::SslManagement { selected, editing } => {
+                let mut edit = editing.take();
+                let result = screens::ssl_manager::handle_key(key, self, selected, &mut edit);
+                if edit.is_some() { *editing = edit; }
+                result
+            }
             Screen::LogViewer(ref mut state) => screens::log_viewer::handle_key(key, self, state),
             Screen::Settings => screens::settings_page::handle_key(key, self),
             _ => None,
@@ -276,6 +289,9 @@ impl App {
                     self.write_config(); self.show_msg("User removed");
                 }
             }
+            Action::SaveUser { inbound_idx, user_idx, proto, labels, values, is_new } => {
+                self.handle_save_user(inbound_idx, user_idx, &proto, &labels, &values, is_new);
+            }
             Action::SaveRouting(rules) => {
                 self.routing_rules = rules; self.write_config(); self.show_msg("Saved");
                 self.current_screen = Screen::RoutingEditor { selected: 0, editing: None };
@@ -302,6 +318,25 @@ impl App {
                 self.current_screen = Screen::ShareExport { content: sub };
             }
             Action::ToggleInbound(_) => { self.show_msg("Toggled"); }
+            Action::IssueCert(domain) => {
+                match xray_services::AcmeService::issue_cert(&domain, "webroot", Some("/var/www/html")) {
+                    Ok(_) => {
+                        let path = format!("/etc/xray/certs/{}/fullchain.pem", domain);
+                        self.certificates.push(CertInfo {
+                            domain: domain.clone(),
+                            cert_path: format!("/etc/xray/certs/{}/fullchain.pem", domain),
+                            key_path: format!("/etc/xray/certs/{}/privkey.pem", domain),
+                            issued_at: chrono::Local::now().date_naive(),
+                            expires_at: chrono::Local::now().date_naive() + chrono::Duration::days(90),
+                            issuer: "Let's Encrypt".into(),
+                            auto_renew: true,
+                            renew_command: Some("/root/.acme.sh/acme.sh --renew -d ".to_string() + &domain),
+                        });
+                        self.show_msg(&format!("Cert issued for {}", domain));
+                    }
+                    Err(e) => self.show_msg(&format!("Issue failed: {}", e)),
+                }
+            }
             Action::UpdateSettings(s) => { self.settings = s; self.show_msg("Saved"); self.current_screen = Screen::Dashboard; }
             Action::ShowMessage(msg) => self.show_msg(&msg),
             Action::Quit => self.should_quit = true,
@@ -316,7 +351,66 @@ impl App {
         }
     }
 
-    fn show_msg(&mut self, msg: &str) { self.status_message = Some((msg.to_string(), Instant::now())); }
+    pub fn show_msg(&mut self, msg: &str) { self.status_message = Some((msg.to_string(), Instant::now())); }
+
+    fn handle_save_user(&mut self, inbound_idx: usize, user_idx: usize, proto: &str, labels: &[String], values: &[String], is_new: bool) {
+        let Some(inb) = self.inbounds.get_mut(inbound_idx) else { return };
+        match (&mut inb.settings, proto) {
+            (ProtocolSettings::VMess(s), "VMess") => {
+                if is_new {
+                    s.clients.push(VMessClient { id: values.get(0).cloned().unwrap_or_default(), security: values.get(1).cloned().unwrap_or_else(|| "auto".into()), email: Some(values.get(2).cloned().unwrap_or_default()).filter(|s| !s.is_empty()), level: None });
+                } else if let Some(c) = s.clients.get_mut(user_idx) {
+                    if let Some(v) = values.get(0) { c.id = v.clone(); }
+                    if let Some(v) = values.get(1) { c.security = v.clone(); }
+                    if let Some(v) = values.get(2) { c.email = if v.is_empty() { None } else { Some(v.clone()) }; }
+                }
+            }
+            (ProtocolSettings::VLess(s), "VLESS") => {
+                if is_new {
+                    s.clients.push(VLessClient { id: values.get(0).cloned().unwrap_or_default(), flow: Some(values.get(1).cloned().unwrap_or_default()).filter(|s| !s.is_empty()), email: Some(values.get(2).cloned().unwrap_or_default()).filter(|s| !s.is_empty()), level: None });
+                } else if let Some(c) = s.clients.get_mut(user_idx) {
+                    if let Some(v) = values.get(0) { c.id = v.clone(); }
+                    if let Some(v) = values.get(1) { c.flow = if v.is_empty() { None } else { Some(v.clone()) }; }
+                    if let Some(v) = values.get(2) { c.email = if v.is_empty() { None } else { Some(v.clone()) }; }
+                }
+            }
+            (ProtocolSettings::Trojan(s), "Trojan") => {
+                if is_new {
+                    s.clients.push(TrojanClient { password: values.get(0).cloned().unwrap_or_default(), email: Some(values.get(1).cloned().unwrap_or_default()).filter(|s| !s.is_empty()), level: None });
+                } else if let Some(c) = s.clients.get_mut(user_idx) {
+                    if let Some(v) = values.get(0) { c.password = v.clone(); }
+                    if let Some(v) = values.get(1) { c.email = if v.is_empty() { None } else { Some(v.clone()) }; }
+                }
+            }
+            (ProtocolSettings::Shadowsocks(s), "Shadowsocks") => {
+                if let Some(v) = values.get(0) { s.password = v.clone(); }
+                if let Some(v) = values.get(1) { s.method = v.clone(); }
+                if let Some(v) = values.get(2) { s.email = if v.is_empty() { None } else { Some(v.clone()) }; }
+            }
+            (ProtocolSettings::Http(s), "HTTP") => {
+                if is_new {
+                    s.accounts.push(xray_model::HttpAccount { user: values.get(0).cloned().unwrap_or_default(), pass: values.get(1).cloned().unwrap_or_default() });
+                } else if let Some(a) = s.accounts.get_mut(user_idx) {
+                    if let Some(v) = values.get(0) { a.user = v.clone(); }
+                    if let Some(v) = values.get(1) { a.pass = v.clone(); }
+                }
+            }
+            (ProtocolSettings::Socks(s), "SOCKS") => {
+                if let SocksAuth::Password { accounts } = &mut s.auth {
+                    if is_new {
+                        accounts.push(xray_model::SocksAccount { user: values.get(0).cloned().unwrap_or_default(), pass: values.get(1).cloned().unwrap_or_default() });
+                    } else if let Some(a) = accounts.get_mut(user_idx) {
+                        if let Some(v) = values.get(0) { a.user = v.clone(); }
+                        if let Some(v) = values.get(1) { a.pass = v.clone(); }
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.write_config();
+        self.show_msg(if is_new { "User added" } else { "User updated" });
+        self.current_screen = Screen::UserManager { inbound_idx, selected: user_idx, editing: None };
+    }
     pub fn refresh_status(&mut self) { if let Ok(s) = self.systemd_service.get_status() { self.xray_status = s; } }
     pub fn save_and_quit(&self) {}
 }
@@ -350,9 +444,9 @@ fn render_content(f: &mut Frame, area: Rect, app: &App) {
         Screen::Dashboard => screens::dashboard::render(f, area, app),
         Screen::InboundList { selected: s } => screens::inbound_list::render(f, area, app, *s),
         Screen::InboundWizard(ref wiz) => screens::wizard::render(f, area, app, wiz),
-        Screen::UserManager { inbound_idx: i, selected: s } => screens::user_manager::render(f, area, app, *i, *s),
+        Screen::UserManager { inbound_idx: i, selected: s, .. } => screens::user_manager::render(f, area, app, *i, *s),
         Screen::RoutingEditor { selected: s, editing: e } => screens::routing_editor::render(f, area, app, *s, e.as_ref()),
-        Screen::SslManagement { selected: s } => screens::ssl_manager::render(f, area, app, *s),
+        Screen::SslManagement { selected: s, editing } => screens::ssl_manager::render(f, area, app, *s, editing),
         Screen::LogViewer(ref st) => screens::log_viewer::render(f, area, st, app.command_cursor),
         Screen::Settings => screens::settings_page::render(f, area, app),
         Screen::ConfirmDialog { message, .. } => screens::confirm::render(f, area, message),

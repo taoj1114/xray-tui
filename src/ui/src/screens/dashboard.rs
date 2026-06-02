@@ -4,6 +4,7 @@ use crate::{App, Action};
 
 const ITEMS: &[(&str, &str)] = &[
     ("Install Xray",     "Download & install Xray via official script"),
+    ("Start Xray",       "Start the Xray service via systemd"),
     ("Restart Xray",     "Reload config & restart service"),
     ("Stop Xray",        "Stop the running Xray service"),
 ];
@@ -14,8 +15,9 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> Option<Action> {
         KeyCode::Down | KeyCode::Char('j') => { let c = &mut app.command_cursor; if *c + 1 < ITEMS.len() { *c += 1; } None }
         KeyCode::Enter => match app.command_cursor {
             0 => Some(Action::InstallXray),
-            1 => Some(Action::RestartXray),
-            2 => Some(Action::StopXray),
+            1 => Some(Action::StartXray),
+            2 => Some(Action::RestartXray),
+            3 => Some(Action::StopXray),
             _ => None,
         },
         _ => None,

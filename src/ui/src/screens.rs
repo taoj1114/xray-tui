@@ -12,3 +12,5 @@ pub mod share_export;
 pub use wizard::{InboundWizardState, WizardStep, WizardField, WizardFieldType, InboundConfigBuilder};
 pub use log_viewer::LogViewerState;
 pub use routing_editor::RoutingEditMode;
+pub use user_manager::UserEditMode;
+pub use ssl_manager::SslEditState;
