@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Layout, Constraint, Direction, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Tabs},
+    widgets::{Block, Borders, Paragraph},
 };
 use crossterm::event::{KeyEvent, KeyCode};
 use xray_model::*;

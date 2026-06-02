@@ -14,8 +14,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("Save & Apply",  "Save rules and regenerate Xray config"),
 ];
 
-pub fn handle_key(key: KeyEvent, app: &mut App) -> Option<Action> {
-    let Screen::RoutingEditor { ref mut selected, ref mut editing } = &mut app.current_screen else { return None; };
+pub fn handle_key(key: KeyEvent, app: &mut App, selected: &mut usize, editing: &mut Option<RoutingEditMode>) -> Option<Action> {
     let len = app.routing_rules.len();
     match key.code {
         KeyCode::Up | KeyCode::Char('k')   => { let c = &mut app.command_cursor; *c = c.saturating_sub(1); None }
@@ -35,7 +34,7 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> Option<Action> {
     }
 }
 
-pub fn render(f: &mut Frame, area: Rect, app: &App, selected: usize, editing: Option<&RoutingEditMode>) {
+pub fn render(f: &mut Frame, area: Rect, app: &App, selected: usize, _editing: Option<&RoutingEditMode>) {
     let chunks = Layout::vertical([Constraint::Length(3+app.routing_rules.len().max(1) as u16), Constraint::Min(1)]).split(area);
     let header = Row::new(["#","Type","Match","Action"]).style(Style::default().fg(Color::Cyan));
     let rows: Vec<Row> = if app.routing_rules.is_empty() { vec![Row::new(["","(empty)","",""])] } else { app.routing_rules.iter().enumerate().map(|(i,r)| { let hl=i==selected; let s=if hl{Style::default().fg(Color::Black).bg(Color::White)}else{Style::default()}; let t=if r.domain.is_some(){"domain"}else if r.ip.is_some(){"ip"}else{"any"}; let m=r.domain.as_ref().map(|d|d.join(",")).or_else(||r.ip.as_ref().map(|d|d.join(","))).unwrap_or("*".into()); Row::new(vec![Cell::from((i+1).to_string()).style(s),Cell::from(t).style(s),Cell::from(m).style(s),Cell::from(r.outbound_tag.clone()).style(s)]) }).collect() };

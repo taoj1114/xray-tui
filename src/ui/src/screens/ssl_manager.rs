@@ -9,8 +9,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("Auto Renew",   "Toggle auto-renew for selected domain"),
 ];
 
-pub fn handle_key(key: KeyEvent, app: &mut App) -> Option<Action> {
-    let Screen::SslManagement { ref mut selected } = &mut app.current_screen else { return None; };
+pub fn handle_key(key: KeyEvent, app: &mut App, selected: &mut usize) -> Option<Action> {
     let len = app.certificates.len();
     match key.code {
         KeyCode::Up | KeyCode::Char('k')   => { let c = &mut app.command_cursor; *c = c.saturating_sub(1); None }

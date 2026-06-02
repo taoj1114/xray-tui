@@ -8,10 +8,8 @@ const COMMANDS: &[(&str, &str)] = &[
     ("Copy Link",   "Copy link for selected user"),
 ];
 
-pub fn handle_key(key: KeyEvent, app: &mut App) -> Option<Action> {
-    let Screen::UserManager { ref mut selected, inbound_idx } = &mut app.current_screen else { return None; };
-    let inb = app.inbounds.get(*inbound_idx)?;
-    let count = inb.user_count();
+pub fn handle_key(key: KeyEvent, app: &mut App, selected: &mut usize, inbound_idx: usize) -> Option<Action> {
+    let count = app.inbounds.get(inbound_idx).map(|i| i.user_count()).unwrap_or(0);
     match key.code {
         KeyCode::Up | KeyCode::Char('k')   => { let c = &mut app.command_cursor; *c = c.saturating_sub(1); None }
         KeyCode::Down | KeyCode::Char('j') => { let c = &mut app.command_cursor; if *c + 1 < COMMANDS.len() { *c += 1; } None }
@@ -19,11 +17,10 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> Option<Action> {
         KeyCode::Right => { if *selected + 1 < count { *selected += 1; } None }
         KeyCode::Enter => match app.command_cursor {
             0 => Some(Action::ShowMessage("Add User: coming".into())),
-            1 if count > 0 => Some(Action::PushScreen(Screen::ConfirmDialog { message: format!("Delete user #{}?", *selected+1), on_confirm: ConfirmedAction::DeleteUser { inbound_idx: *inbound_idx, user_idx: *selected } })),
-            2 if count > 0 => { let ip = app.settings.server_public_ip.clone().unwrap_or("your-server-ip".into()); xray_services::SubscriptionService::generate_share_link(&app.inbounds[*inbound_idx], &ip, *selected).map(|l| Action::PushScreen(Screen::ShareExport { content: l })) }
+            1 if count > 0 => Some(Action::PushScreen(Screen::ConfirmDialog { message: format!("Delete user #{}?", *selected+1), on_confirm: ConfirmedAction::DeleteUser { inbound_idx, user_idx: *selected } })),
+            2 if count > 0 => { let ip = app.settings.server_public_ip.clone().unwrap_or("your-server-ip".into()); xray_services::SubscriptionService::generate_share_link(&app.inbounds[inbound_idx], &ip, *selected).map(|l| Action::PushScreen(Screen::ShareExport { content: l })) }
             _ => None,
         },
-        KeyCode::Esc => Some(Action::PopScreen),
         _ => None,
     }
 }

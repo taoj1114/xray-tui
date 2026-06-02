@@ -1,4 +1,4 @@
-use ratatui::{Frame, layout::{Layout, Constraint, Direction, Rect}, style::{Color, Style}, text::{Line, Span}, widgets::{Block, Borders, Paragraph, Row, Table, Cell}};
+use ratatui::{Frame, layout::{Layout, Constraint, Rect}, style::{Color, Style}, text::{Line, Span}, widgets::{Block, Borders, Paragraph, Row, Table, Cell}};
 use crossterm::event::{KeyEvent, KeyCode};
 use crate::{App, Action, Screen, ConfirmedAction};
 use crate::screens::InboundWizardState;
@@ -11,8 +11,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("Copy Share Link", "Copy subscription link for the selected inbound"),
 ];
 
-pub fn handle_key(key: KeyEvent, app: &mut App) -> Option<Action> {
-    let Screen::InboundList { ref mut selected } = &mut app.current_screen else { return None; };
+pub fn handle_key(key: KeyEvent, app: &mut App, selected: &mut usize) -> Option<Action> {
     let len = app.inbounds.len();
     match key.code {
         KeyCode::Up | KeyCode::Char('k')   => { let c = &mut app.command_cursor; *c = c.saturating_sub(1); None }
@@ -27,7 +26,6 @@ pub fn handle_key(key: KeyEvent, app: &mut App) -> Option<Action> {
             4 if len > 0 => { let ip = app.settings.server_public_ip.clone().unwrap_or("your-server-ip".into()); xray_services::SubscriptionService::generate_share_link(&app.inbounds[*selected], &ip, 0).map(|l| Action::PushScreen(Screen::ShareExport { content: l })) }
             _ => None,
         },
-        KeyCode::Esc => Some(Action::PopScreen),
         _ => None,
     }
 }

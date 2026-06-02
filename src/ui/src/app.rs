@@ -127,7 +127,7 @@ impl App {
                 if !self.handle_escape() { self.pop_screen(); }
                 return None;
             }
-            KeyCode::F(5) => {
+            KeyCode::Tab => {
                 self.switch_tab(key.modifiers.contains(KeyModifiers::SHIFT));
                 return None;
             }
@@ -177,9 +177,60 @@ impl App {
     }
 
     fn handle_screen_key(&mut self, key: KeyEvent) -> Option<Action> {
-        // Avoid double-borrow: extract screen, handle, put back
+        // Screens like ConfirmDialog and ShareExport mutate screen_history via pop_screen,
+        // so handle them here directly (they don't need mem::replace borrow splitting).
+        match &mut self.current_screen {
+            Screen::ConfirmDialog { on_confirm, .. } => {
+                let confirmed = on_confirm.clone();
+                return match key.code {
+                    KeyCode::Enter => {
+                        self.pop_screen();
+                        match confirmed {
+                            ConfirmedAction::DeleteInbound(idx) => Some(Action::DeleteInbound(idx)),
+                            ConfirmedAction::DeleteUser { inbound_idx, user_idx } => Some(Action::DeleteUser(inbound_idx, user_idx)),
+                            ConfirmedAction::DeleteCert(idx) => { self.certificates.remove(idx); Some(Action::ShowMessage("Deleted".into())) }
+                            ConfirmedAction::RestartXray => Some(Action::RestartXray),
+                            ConfirmedAction::StopXray => Some(Action::StopXray),
+                        }
+                    }
+                    KeyCode::Esc => { self.pop_screen(); None }
+                    _ => None,
+                };
+            }
+            Screen::ShareExport { content } => {
+                let c = content.clone();
+                return match key.code {
+                    KeyCode::Esc => { self.pop_screen(); None }
+                    KeyCode::Char('y') => {
+                        let pipe = std::process::Command::new("xclip").arg("-sel").arg("clip")
+                            .stdin(std::process::Stdio::piped()).spawn();
+                        if let Ok(mut child) = pipe {
+                            if let Some(mut stdin) = child.stdin.take() {
+                                use std::io::Write; let _ = stdin.write_all(c.as_bytes());
+                            }
+                            let _ = child.wait();
+                        }
+                        Some(Action::ShowMessage("Copied".into()))
+                    }
+                    _ => None,
+                };
+            }
+            _ => {}
+        }
+
+        // Remaining screens: extract state, dispatch, restore
         let mut screen = std::mem::replace(&mut self.current_screen, Screen::Dashboard);
-        let action = dispatch_screen_key(key, self, &mut screen);
+        let action = match &mut screen {
+            Screen::Dashboard => screens::dashboard::handle_key(key, self),
+            Screen::InboundList { selected } => screens::inbound_list::handle_key(key, self, selected),
+            Screen::InboundWizard(ref mut wiz) => screens::wizard::handle_key(key, self, wiz),
+            Screen::UserManager { selected, inbound_idx } => screens::user_manager::handle_key(key, self, selected, *inbound_idx),
+            Screen::RoutingEditor { selected, editing } => screens::routing_editor::handle_key(key, self, selected, editing),
+            Screen::SslManagement { selected } => screens::ssl_manager::handle_key(key, self, selected),
+            Screen::LogViewer(ref mut state) => screens::log_viewer::handle_key(key, self, state),
+            Screen::Settings => screens::settings_page::handle_key(key, self),
+            _ => None,
+        };
         self.current_screen = screen;
         action
     }
@@ -269,22 +320,6 @@ impl App {
     pub fn refresh_status(&mut self) { if let Ok(s) = self.systemd_service.get_status() { self.xray_status = s; } }
     pub fn save_and_quit(&self) {}
 }
-
-fn dispatch_screen_key(key: KeyEvent, app: &mut App, screen: &mut Screen) -> Option<Action> {
-    match screen {
-        Screen::Dashboard => screens::dashboard::handle_key(key, app),
-        Screen::InboundList { .. } => screens::inbound_list::handle_key(key, app),
-        Screen::InboundWizard(ref mut wiz) => screens::wizard::handle_key(key, app, wiz),
-        Screen::UserManager { .. } => screens::user_manager::handle_key(key, app),
-        Screen::RoutingEditor { .. } => screens::routing_editor::handle_key(key, app),
-        Screen::SslManagement { .. } => screens::ssl_manager::handle_key(key, app),
-        Screen::LogViewer(ref mut state) => screens::log_viewer::handle_key(key, app, state),
-        Screen::Settings => screens::settings_page::handle_key(key, app),
-        Screen::ConfirmDialog { .. } => screens::confirm::handle_key(key, app),
-        Screen::ShareExport { .. } => screens::share_export::handle_key(key, app),
-    }
-}
-
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
     let layout = Layout::default().direction(Direction::Vertical)
@@ -327,8 +362,8 @@ fn render_content(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_help_bar(f: &mut Frame, area: Rect, app: &App) {
     let help = match &app.current_screen {
-        Screen::Dashboard => "q:Quit  F5:Tab  ↑↓:Select  Enter:Execute",
-        Screen::InboundList{..}=>"Esc:Back  ↑↓:Command  ←→:Entry  Enter:Execute  F5:Tab",
+        Screen::Dashboard => "q:Quit  Tab:Tab  ↑↓:Select  Enter:Execute",
+        Screen::InboundList{..}=>"Esc:Back  ↑↓:Command  ←→:Entry  Enter:Execute  Tab:Tab",
         Screen::InboundWizard(_)=>"Tab:Field  Esc:Close/Back  Enter:Confirm  ←→:Steps",
         Screen::UserManager{..}=>"Esc:Back  ↑↓:Command  ←→:User  Enter:Execute",
         Screen::RoutingEditor{..}=>"Esc:Back  ↑↓:Command  ←→:Rule  Enter:Execute",
