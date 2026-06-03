@@ -13,6 +13,7 @@ pub enum ProtocolSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VMessSettings {
     pub clients: Vec<VMessClient>,
 }
@@ -30,6 +31,7 @@ pub struct VMessClient {
 fn default_vmess_security() -> String { "auto".into() }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VLessSettings {
     pub clients: Vec<VLessClient>,
     #[serde(default = "default_decryption")]
@@ -49,6 +51,7 @@ pub struct VLessClient {
 fn default_decryption() -> String { "none".into() }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TrojanSettings {
     pub clients: Vec<TrojanClient>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -66,6 +69,7 @@ pub struct TrojanClient {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ShadowsocksSettings {
     pub method: String,
     pub password: String,
@@ -79,6 +83,7 @@ pub struct ShadowsocksSettings {
 fn default_ss_network() -> String { "tcp,udp".into() }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HttpSettings {
     #[serde(default)]
     pub accounts: Vec<HttpAccount>,
@@ -96,6 +101,7 @@ pub struct HttpAccount {
 fn default_http_timeout() -> u32 { 300 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SocksSettings {
     pub auth: SocksAuth,
     #[serde(default)]

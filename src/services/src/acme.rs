@@ -116,7 +116,7 @@ impl AcmeService {
         webroot: Option<&str>,
         cf_email: Option<&str>,
         cf_key: Option<&str>,
-    ) -> Result<(), ServiceError> {
+    ) -> Result<CertInfo, ServiceError> {
         let mut args = vec!["--issue", "-d", domain];
 
         match method {
@@ -149,7 +149,35 @@ impl AcmeService {
 
         let output = Self::run_acme(&args)?;
         if output.contains("Certificate success") || output.contains("Cert success") || output.contains("Domains not changed") {
-            Ok(())
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+            // Install to standard Xray cert dir
+            let cert_dir = format!("/etc/xray/certs/{}", domain);
+            let _ = std::fs::create_dir_all(&cert_dir);
+            let cert_path = format!("{}/fullchain.pem", cert_dir);
+            let key_path = format!("{}/privkey.pem", cert_dir);
+
+            let install_output = Self::run_acme(&[
+                "--install-cert", "-d", domain,
+                "--cert-file", &cert_path,
+                "--key-file", &key_path,
+                "--reloadcmd", "systemctl reload xray 2>/dev/null || true",
+            ]);
+            // Not fatal if install-cert fails — cert is still issued, just not copied
+            if install_output.is_err() {
+                eprintln!("acme.sh install-cert warning for {}: {:?}", domain, install_output);
+            }
+
+            let now = chrono::Local::now().date_naive();
+            Ok(CertInfo {
+                domain: domain.to_string(),
+                cert_path,
+                key_path,
+                issued_at: now,
+                expires_at: now + chrono::Duration::days(90),
+                issuer: "Let's Encrypt".into(),
+                auto_renew: false,
+                renew_command: Some(format!("{}/.acme.sh/acme.sh --renew -d {} --reloadcmd 'systemctl reload xray'", home, domain)),
+            })
         } else {
             Err(ServiceError::Acme(format!("Cert issue failed:\n{}", output)))
         }
@@ -158,6 +186,14 @@ impl AcmeService {
     pub fn renew_cert(domain: &str) -> Result<(), ServiceError> {
         let output = Self::run_acme(&["--renew", "-d", domain])?;
         if output.contains("success") {
+            let cert_dir = format!("/etc/xray/certs/{}", domain);
+            let _ = std::fs::create_dir_all(&cert_dir);
+            let _ = Self::run_acme(&[
+                "--install-cert", "-d", domain,
+                "--cert-file", &format!("{}/fullchain.pem", cert_dir),
+                "--key-file", &format!("{}/privkey.pem", cert_dir),
+                "--reloadcmd", "systemctl reload xray 2>/dev/null || true",
+            ]);
             Ok(())
         } else {
             Err(ServiceError::Acme(format!("Cert renewal failed:\n{}", output)))

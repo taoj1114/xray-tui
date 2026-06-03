@@ -116,9 +116,48 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, selected: usize, edit: &Opti
         if !xray_services::AcmeService::is_installed() { " │  ⚠ acme.sh not installed" } else { "" }
     };
 
-    let header = Row::new(["#","Domain","Expires","Status","Auto"]).style(Style::default().fg(Color::Cyan));
-    let rows: Vec<Row> = if app.certificates.is_empty() { vec![Row::new(["","(none)","","",""])] } else { app.certificates.iter().enumerate().map(|(i,c)| { let hl=i==selected; let s=if hl{Style::default().fg(Color::Black).bg(Color::White)}else{Style::default()}; let days=(c.expires_at-chrono::Local::now().date_naive()).num_days(); let st=if days>30{"OK"}else if days>0{"soon"}else{"expired"}; Row::new(vec![Cell::from((i+1).to_string()).style(s),Cell::from(c.domain.clone()).style(s),Cell::from(c.expires_at.to_string()).style(s),Cell::from(st),Cell::from(if c.auto_renew{"Y"}else{"N"}).style(s)]) }).collect() };
-    f.render_widget(Table::new(rows,[Constraint::Length(3),Constraint::Length(20),Constraint::Length(10),Constraint::Length(8),Constraint::Length(4)]).header(header).block(Block::default().borders(Borders::ALL).title(format!("SSL{}", acme_tooltip))), chunks[0]);
+    let header = Row::new(["#","Domain","Expires","Status","Auto","Cert Path","Avail"])
+        .style(Style::default().fg(Color::Cyan));
+    let rows: Vec<Row> = if app.certificates.is_empty() {
+        vec![Row::new(["","(none)","","","","",""])]
+    } else {
+        app.certificates.iter().enumerate().map(|(i,c)| {
+            let hl = i == selected;
+            let s = if hl { Style::default().fg(Color::Black).bg(Color::White) } else { Style::default() };
+            let days = (c.expires_at - chrono::Local::now().date_naive()).num_days();
+            let st = if days > 30 { "OK" } else if days > 0 { "● soon" } else { "✕ expired" };
+            let valid = std::path::Path::new(&c.cert_path).exists() && std::path::Path::new(&c.key_path).exists();
+            let avail = if valid {
+                Span::styled("✓", Style::default().fg(Color::Green))
+            } else {
+                Span::styled("✗", Style::default().fg(Color::Red))
+            };
+            let path_style = if valid { Style::default().fg(Color::DarkGray) } else { Style::default().fg(Color::Red) };
+            Row::new(vec![
+                Cell::from((i+1).to_string()).style(s),
+                Cell::from(c.domain.clone()).style(s),
+                Cell::from(c.expires_at.to_string()).style(s),
+                Cell::from(st),
+                Cell::from(if c.auto_renew { "Y" } else { "N" }).style(s),
+                Cell::from(Span::styled(&c.cert_path, path_style)),
+                Cell::from(avail),
+            ])
+        }).collect()
+    };
+    f.render_widget(
+        Table::new(rows, [
+            Constraint::Length(3),
+            Constraint::Length(20),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(4),
+            Constraint::Min(20),
+            Constraint::Length(5),
+        ])
+        .header(header)
+        .block(Block::default().borders(Borders::ALL).title(format!("SSL{}", acme_tooltip))),
+        chunks[0],
+    );
 
     let title;
     let bottom_lines: Vec<Line> = if let Some(st) = edit {

@@ -71,7 +71,7 @@ fn test_vless_reality_serialization() {
 
     let json = serde_json::to_string(&inbound).unwrap();
     assert!(json.contains("\"protocol\":\"vless\""));
-    assert!(json.contains("\"reality_settings\""));
+    assert!(json.contains("\"realitySettings\""));
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn test_trojan_ws_serialization() {
 
     let json = serde_json::to_string(&inbound).unwrap();
     assert!(json.contains("\"protocol\":\"trojan\""));
-    assert!(json.contains("\"ws_settings\""));
+    assert!(json.contains("\"wsSettings\""));
 }
 
 #[test]
@@ -136,7 +136,7 @@ fn test_vmess_grpc_serialization() {
     };
 
     let json = serde_json::to_string(&inbound).unwrap();
-    assert!(json.contains("\"grpc_settings\""));
+    assert!(json.contains("\"grpcSettings\""));
 }
 
 #[test]

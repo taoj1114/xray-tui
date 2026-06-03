@@ -8,20 +8,28 @@ pub struct StreamSettings {
     #[serde(default = "default_stream_security")]
     pub security: StreamSecurity,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "tlsSettings", alias = "tls_settings")]
     pub tls_settings: Option<TlsSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "realitySettings", alias = "reality_settings")]
     pub reality_settings: Option<RealitySettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "wsSettings", alias = "ws_settings")]
     pub ws_settings: Option<WsSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "grpcSettings", alias = "grpc_settings")]
     pub grpc_settings: Option<GrpcSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "httpupgradeSettings", alias = "httpupgrade_settings")]
     pub httpupgrade_settings: Option<HttpUpgradeSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "tcpSettings", alias = "tcp_settings")]
     pub tcp_settings: Option<TcpSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "kcpSettings", alias = "kcp_settings")]
     pub kcp_settings: Option<KcpSettings>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "quicSettings", alias = "quic_settings")]
     pub quic_settings: Option<QuicSettings>,
 }
 
@@ -74,11 +82,13 @@ impl std::fmt::Display for StreamSecurity {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TlsSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "serverName", alias = "server_name")]
     pub server_name: Option<String>,
     pub certificates: Vec<TlsCertificate>,
     #[serde(default)]
     pub alpn: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "minVersion", alias = "min_version")]
     pub min_version: Option<String>,
 }
 

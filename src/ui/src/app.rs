@@ -579,12 +579,7 @@ impl App {
                 let tx = self.task_sender.clone();
                 std::thread::spawn(move || {
                     match xray_services::AcmeService::issue_cert(&domain, &method, webroot.as_deref(), cf_email.as_deref(), cf_key.as_deref()) {
-                        Ok(_) => {
-                            let cert = CertInfo {
-                                domain: domain.clone(), cert_path: format!("/etc/xray/certs/{}/fullchain.pem", domain), key_path: format!("/etc/xray/certs/{}/privkey.pem", domain),
-                                issued_at: chrono::Local::now().date_naive(), expires_at: chrono::Local::now().date_naive() + chrono::Duration::days(90), issuer: "Let's Encrypt".into(),
-                                auto_renew: true, renew_command: Some("/root/.acme.sh/acme.sh --renew -d ".to_string() + &domain),
-                            };
+                        Ok(cert) => {
                             let _ = tx.send(TaskResult::CertIssued(cert));
                         }
                         Err(e) => { let _ = tx.send(TaskResult::Error(format!("Issue failed: {}", e))); }
@@ -632,7 +627,14 @@ impl App {
         let active_inbounds: Vec<InboundConfig> = self.inbounds.iter().filter(|e| e.enabled).map(|e| e.config.clone()).collect();
         let routing = RoutingConfig { domain_strategy: "IPIfNonMatch".into(), rules: self.routing_rules.clone() };
         let config = self.xray_service.generate_config(&active_inbounds, &routing);
-        if let Err(e) = self.xray_service.write_config(&config) { self.show_msg(&format!("Failed to write: {}", e)); }
+        if let Err(e) = self.xray_service.write_config(&config) {
+            self.show_msg(&format!("Failed to write: {}", e));
+            return;
+        }
+        if self.xray_status.is_running {
+            let _ = self.systemd_service.restart();
+            self.refresh_status();
+        }
     }
 
     pub fn show_msg(&mut self, msg: &str) { self.status_message = Some((msg.to_string(), Instant::now())); }
