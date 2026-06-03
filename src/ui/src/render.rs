@@ -57,8 +57,7 @@ fn render_help_bar(f: &mut Frame, area: Rect, app: &App) {
         Screen::Settings(_) =>"Esc:Back  ↑↓:Command  Enter:Edit",
         Screen::Others => "↑↓:Select  Enter:Execute  Tab:Tab",
         Screen::ConfirmDialog{..}=>"y:Yes  n/Esc:No",
-        Screen::ShareExport{..}=>"Esc:Back  c:Copy",
-    };
+        Screen::ShareExport{..}=>"Esc:Back  y:Copy  o:Open",    };
     if let Some((msg,_))= &app.status_message { f.render_widget(Paragraph::new(Line::from(vec![Span::styled(" ⓘ ", Style::default().fg(Color::Green)), Span::raw(msg)])), area); }
     else { f.render_widget(Paragraph::new(help).style(Style::default().fg(Color::DarkGray)), area); }
 }

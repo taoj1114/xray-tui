@@ -299,6 +299,44 @@ impl App {
                         }
                         Some(Action::ShowMessage("Copied".into()))
                     }
+                    KeyCode::Char('o') => {
+                        let svg = crate::screens::qr_svg_data(&c);
+                        let html = format!("<!DOCTYPE html><html><head><meta charset=utf-8><title>Xray QR</title></head><body style='margin:0;display:flex;justify-content:center;align-items:center;height:100vh;background:#fff'><img src='data:image/svg+xml;charset=utf-8,{}'></body></html>", svg);
+                        let html = Arc::new(html);
+                        let ip = self.settings.server_public_ip.clone().unwrap_or_else(|| "0.0.0.0".into());
+                        let tx = self.task_sender.clone();
+                        std::thread::spawn(move || {
+                            let listener = match std::net::TcpListener::bind("0.0.0.0:0") {
+                                Ok(l) => l,
+                                Err(e) => { let _ = tx.send(TaskResult::Error(format!("Bind failed: {}", e))); return; }
+                            };
+                            let port = match listener.local_addr() {
+                                Ok(a) => a.port(),
+                                Err(_) => { let _ = tx.send(TaskResult::Error("No port".into())); return; }
+                            };
+                            let url = format!("http://{}:{}", ip, port);
+                            let _ = tx.send(TaskResult::Message(format!("{} (closes in 5s)", url)));
+                            let _ = listener.set_nonblocking(true);
+                            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                            loop {
+                                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                                if remaining.is_zero() { break; }
+                                match listener.accept() {
+                                    Ok((mut stream, _)) => {
+                                        use std::io::Write;
+                                        let resp = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", html.len(), html);
+                                        let _ = stream.write_all(resp.as_bytes());
+                                        break;
+                                    }
+                                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                        std::thread::sleep(std::cmp::min(remaining, std::time::Duration::from_millis(100)));
+                                    }
+                                    Err(_) => break,
+                                }
+                            }
+                        });
+                        None
+                    }
                     _ => None,
                 };
             }

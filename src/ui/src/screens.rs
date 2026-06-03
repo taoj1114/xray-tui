@@ -14,3 +14,4 @@ pub use log_viewer::LogViewerState;
 pub use user_manager::UserEditMode;
 pub use ssl_manager::SslEditState;
 pub use settings_page::SettingsEditState;
+pub use share_export::qr_svg_data;

@@ -1,14 +1,51 @@
 use ratatui::{Frame, layout::Rect, style::{Color, Style}, text::{Line, Span}, widgets::{Block, Borders, Paragraph, Clear}};
+use qrcode::{QrCode, render::svg};
+
+pub fn qr_svg_data(content: &str) -> String {
+    let code = QrCode::new(content.as_bytes()).unwrap_or_else(|_| QrCode::new(b"").unwrap());
+    let svg = code.render::<svg::Color>().build();
+    percent_encode(&svg)
+}
+
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b' ' => out.push_str("%20"),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
 
 pub fn render(f: &mut Frame, area: Rect, content: &str) {
-    let popup_w = 60; let popup_h = 12;
-    let popup = Rect::new(area.x + (area.width.saturating_sub(popup_w))/2, area.y + (area.height.saturating_sub(popup_h))/2, popup_w, popup_h);
+    let popup_w = 60;
+    let popup_h = 12;
+    let popup = Rect::new(
+        area.x + (area.width.saturating_sub(popup_w)) / 2,
+        area.y + (area.height.saturating_sub(popup_h)) / 2,
+        popup_w,
+        popup_h,
+    );
     f.render_widget(Clear, popup);
+
     let preview = if content.len() > 500 { &content[..500] } else { content };
     let lines: Vec<Line> = std::iter::once(Line::from(""))
         .chain(preview.lines().map(|l| Line::from(l)))
         .chain(std::iter::once(Line::from("")))
-        .chain(std::iter::once(Line::from(Span::styled("  y:Copy  Esc:Close  ", Style::default().fg(Color::Yellow)))))
+        .chain(std::iter::once(Line::from(Span::styled(
+            "  y:Copy  o:Open in browser  Esc:Close  ",
+            Style::default().fg(Color::Yellow),
+        ))))
         .collect();
-    f.render_widget(Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Share Link").style(Style::default().bg(Color::Rgb(25, 25, 35)))), popup);
+    f.render_widget(
+        Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Share Link")
+                .style(Style::default().bg(Color::Rgb(25, 25, 35))),
+        ),
+        popup,
+    );
 }
