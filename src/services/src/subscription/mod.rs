@@ -161,8 +161,9 @@ impl SubscriptionService {
     pub fn export_subscription(inbounds: &[InboundConfig], server_ip: &str) -> String {
         let links: Vec<String> = inbounds.iter()
             .flat_map(|inb| {
+                let server = Self::resolve_server_addr(inb, server_ip);
                 let count = inb.user_count();
-                (0..count).filter_map(move |i| Self::generate_share_link(inb, server_ip, i))
+                (0..count).filter_map(move |i| Self::generate_share_link(inb, server, i))
             })
             .collect();
         BASE64.encode(links.join("\n"))
@@ -173,6 +174,18 @@ impl SubscriptionService {
             .read()
             .ok()
             .map(|s| s.trim().to_string())
+    }
+
+    /// 如果 inbound 配置了 TLS 证书绑定域名，使用域名；Reality 的 serverName 是伪装 SNI，不替换
+    pub fn resolve_server_addr<'a>(inbound: &'a InboundConfig, default_ip: &'a str) -> &'a str {
+        // TLS: server_name 是真实的证书域名，客户端应连接此地址
+        if let Some(tls) = &inbound.stream_settings.tls_settings {
+            if let Some(sni) = &tls.server_name {
+                return sni.as_str();
+            }
+        }
+        // Reality: serverName 是伪装目标（如 microsoft.com），不是真实服务器地址，不替换
+        default_ip
     }
 }
 

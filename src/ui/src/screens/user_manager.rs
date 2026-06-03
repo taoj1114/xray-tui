@@ -100,16 +100,18 @@ pub fn handle_key(key: KeyEvent, app: &mut App, selected: &mut usize, inbound_id
             })),
             3 if count > 0 => {
                 let ip = app.settings.server_public_ip.clone().unwrap_or("your-server-ip".into());
-                match xray_services::SubscriptionService::generate_share_link(&inb.config, &ip, *selected) {
+                let server = xray_services::SubscriptionService::resolve_server_addr(&inb.config, &ip);
+                match xray_services::SubscriptionService::generate_share_link(&inb.config, server, *selected) {
                     Some(l) => Some(Action::PushScreen(Screen::ShareExport { content: l })),
                     None => Some(Action::ShowMessage("Sharing not supported for this protocol".into())),
                 }
             }
             4 => {
                 let ip = app.settings.server_public_ip.clone().unwrap_or("your-server-ip".into());
+                let server = xray_services::SubscriptionService::resolve_server_addr(&inb.config, &ip);
                 let mut links = Vec::new();
                 for i in 0..count {
-                    if let Some(l) = xray_services::SubscriptionService::generate_share_link(&inb.config, &ip, i) {
+                    if let Some(l) = xray_services::SubscriptionService::generate_share_link(&inb.config, server, i) {
                         links.push(l);
                     }
                 }

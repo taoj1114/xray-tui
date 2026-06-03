@@ -366,7 +366,8 @@ impl App {
                             }
                             PickerAction::CopyLink => {
                                 let ip = self.settings.server_public_ip.clone().unwrap_or_else(|| "your-server-ip".into());
-                                match xray_services::SubscriptionService::generate_share_link(&self.inbounds[idx].config, &ip, 0) {
+                                let server = xray_services::SubscriptionService::resolve_server_addr(&self.inbounds[idx].config, &ip).to_string();
+                                match xray_services::SubscriptionService::generate_share_link(&self.inbounds[idx].config, &server, 0) {
                                     Some(l) => Some(Action::PushScreen(Screen::ShareExport { content: l })),
                                     None => Some(Action::ShowMessage("Sharing not supported for this protocol".into())),
                                 }
