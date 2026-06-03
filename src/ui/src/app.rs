@@ -201,7 +201,12 @@ impl App {
         match key.code {
             KeyCode::Char('q') => { self.should_quit = true; return None; }
             KeyCode::Esc => {
-                if !self.handle_escape() { self.pop_screen(); }
+                let handled = self.handle_escape();
+                if !handled { self.pop_screen(); }
+                // For Settings/Cert sub-menus, pass Esc through to screen handler for multi-level back
+                if matches!(&self.current_screen, Screen::Settings(Some(_)) | Screen::SslManagement { editing: Some(_), .. }) {
+                    return self.handle_screen_key(key);
+                }
                 return None;
             }
             KeyCode::Tab => {
@@ -216,19 +221,15 @@ impl App {
     fn handle_escape(&mut self) -> bool {
         match &mut self.current_screen {
             Screen::InboundWizard(ref mut wiz) => wiz.close_dropdowns(),
-            Screen::Settings(ref mut edit) => {
-                if let Some(ref mut ed) = edit {
-                    if ed.editing && ed.cf_sub.is_some() {
-                        // Editing CF value → back to CF sub-menu
-                        ed.editing = false;
-                        return true;
-                    }
-                    // Any other editing/sub-menu state → back to command list
-                    *edit = None;
-                    return true;
-                }
-                false
-            }
+            Screen::SslManagement { editing, .. } => match editing {
+                Some(_) => { *editing = None; true }
+                None => false,
+            },
+            Screen::Settings(ref mut edit) => match edit {
+                Some(ref mut ed) if ed.editing || ed.cf_sub.is_some() => true,  // let screen handler handle it
+                Some(_) => { *edit = None; true }
+                None => false,
+            },
             _ => false,
         }
     }

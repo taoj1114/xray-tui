@@ -4,10 +4,10 @@ use crate::{App, Action};
 
 #[derive(Debug, Clone, Default)]
 pub struct SettingsEditState {
-    pub field: usize,
-    pub value: String,
-    pub editing: bool,
-    pub cf_sub: Option<usize>, // None=main, Some(0..3)=CF sub-menu index
+    pub editing: bool,               // true = typing a value
+    pub field: usize,                // command index (0..=5)
+    pub value: String,               // current input
+    pub cf_sub: Option<usize>,       // Some(0..2) = CF sub-menu, None = normal
 }
 
 const COMMANDS: &[(&str, &str)] = &[
@@ -22,32 +22,40 @@ const COMMANDS: &[(&str, &str)] = &[
 
 pub fn handle_key(key: KeyEvent, app: &mut App, edit: &mut Option<SettingsEditState>) -> Option<Action> {
     if let Some(ref mut ed) = edit {
-        // CF sub-menu mode (not editing a value yet)
+        // ── CF sub-menu: browse Email/Token/Zone ──
         if let Some(ref mut sub) = ed.cf_sub {
             return match key.code {
-                KeyCode::Esc => { ed.cf_sub = None; None }
+                KeyCode::Esc => { *edit = None; None }
                 KeyCode::Up | KeyCode::Char('k') => { *sub = sub.saturating_sub(1); None }
                 KeyCode::Down | KeyCode::Char('j') => { if *sub + 1 < 3 { *sub += 1; } None }
                 KeyCode::Enter => {
-                    let cf_field = *sub;
-                    let val = match cf_field {
+                    let cf_field = *sub + 5; // 5=email, 6=token, 7=zone
+                    let val = match *sub {
                         0 => app.settings.cf_email.clone().unwrap_or_default(),
                         1 => app.settings.cf_token.clone().unwrap_or_default(),
                         _ => app.settings.cf_zone_id.clone().unwrap_or_default(),
                     };
-                    *edit = Some(SettingsEditState { field: cf_field, value: val, editing: true, cf_sub: Some(cf_field) });
+                    *edit = Some(SettingsEditState { editing: true, field: cf_field, value: val, cf_sub: None });
                     None
                 }
                 _ => None,
             };
         }
 
-        // Editing a value
+        // ── Editing any field value ──
         if ed.editing {
+            let is_cf = (5..=7).contains(&ed.field);
             return match key.code {
-                KeyCode::Esc => { *edit = None; None }
+                KeyCode::Esc => {
+                    if is_cf {
+                        *edit = Some(SettingsEditState { editing: false, field: 5, value: String::new(), cf_sub: Some(ed.field - 5) });
+                    } else {
+                        *edit = None;
+                    }
+                    None
+                }
                 KeyCode::Enter => {
-                    let val = ed.value.clone();
+                    let val = std::mem::take(&mut ed.value);
                     let field = ed.field;
                     *edit = None;
                     match field {
@@ -62,21 +70,22 @@ pub fn handle_key(key: KeyEvent, app: &mut App, edit: &mut Option<SettingsEditSt
                     }
                     return Some(Action::UpdateSettings(app.settings.clone()));
                 }
-                KeyCode::Char(c) => { ed.value.push(c); return None; }
-                KeyCode::Backspace => { ed.value.pop(); return None; }
-                _ => return None,
+                KeyCode::Char(c) => { ed.value.push(c); None }
+                KeyCode::Backspace => { ed.value.pop(); None }
+                _ => None,
             };
         }
 
         return None;
     }
 
+    // ── Main command list ──
     match key.code {
-        KeyCode::Up | KeyCode::Char('k')   => { let c = &mut app.command_cursor; *c = c.saturating_sub(1); None }
-        KeyCode::Down | KeyCode::Char('j') => { let c = &mut app.command_cursor; if *c + 1 < COMMANDS.len() { *c += 1; } None }
+        KeyCode::Up | KeyCode::Char('k')   => { app.command_cursor = app.command_cursor.saturating_sub(1); None }
+        KeyCode::Down | KeyCode::Char('j') => { if app.command_cursor + 1 < COMMANDS.len() { app.command_cursor += 1; } None }
         KeyCode::Enter => match app.command_cursor {
-            0 => { *edit = Some(SettingsEditState { field: 0, value: app.settings.xray_binary_path.clone(), editing: true, cf_sub: None }); None }
-            1 => { *edit = Some(SettingsEditState { field: 1, value: app.settings.config_path.clone(), editing: true, cf_sub: None }); None }
+            0 => { *edit = Some(SettingsEditState { editing: true, field: 0, value: app.settings.xray_binary_path.clone(), cf_sub: None }); None }
+            1 => { *edit = Some(SettingsEditState { editing: true, field: 1, value: app.settings.config_path.clone(), cf_sub: None }); None }
             2 => {
                 app.settings.log_level = match app.settings.log_level.as_str() {
                     "warning" => "info".into(), "info" => "debug".into(),
@@ -84,9 +93,9 @@ pub fn handle_key(key: KeyEvent, app: &mut App, edit: &mut Option<SettingsEditSt
                 };
                 Some(Action::UpdateSettings(app.settings.clone()))
             }
-            3 => { *edit = Some(SettingsEditState { field: 3, value: app.settings.server_public_ip.clone().unwrap_or_default(), editing: true, cf_sub: None }); None }
-            4 => { *edit = Some(SettingsEditState { field: 4, value: app.settings.state_dir.clone(), editing: true, cf_sub: None }); None }
-            5 => { *edit = Some(SettingsEditState { field: 5, value: String::new(), editing: false, cf_sub: Some(0) }); None }
+            3 => { *edit = Some(SettingsEditState { editing: true, field: 3, value: app.settings.server_public_ip.clone().unwrap_or_default(), cf_sub: None }); None }
+            4 => { *edit = Some(SettingsEditState { editing: true, field: 4, value: app.settings.state_dir.clone(), cf_sub: None }); None }
+            5 => { *edit = Some(SettingsEditState { editing: false, field: 5, value: String::new(), cf_sub: Some(0) }); None }
             6 => Some(Action::UpdateSettings(app.settings.clone())),
             _ => None,
         },
@@ -99,8 +108,7 @@ fn app_fmt(s: &Option<String>, default: &str) -> String {
 }
 
 pub fn render(f: &mut Frame, area: Rect, app: &App, edit: &Option<SettingsEditState>) {
-    let header_h = if edit.is_some() { 11 } else { 10 };
-    let chunks = Layout::vertical([Constraint::Length(header_h), Constraint::Min(4)]).split(area);
+    let chunks = Layout::vertical([Constraint::Length(10), Constraint::Min(4)]).split(area);
 
     let cf_ok = app.settings.cf_email.is_some() && app.settings.cf_token.is_some();
     let cf_status = if cf_ok {
@@ -122,38 +130,29 @@ pub fn render(f: &mut Frame, area: Rect, app: &App, edit: &Option<SettingsEditSt
     ];
     f.render_widget(Paragraph::new(info).block(Block::default().borders(Borders::ALL).title("Settings")), chunks[0]);
 
-    // Render bottom panel
+    // ── Bottom panel ──
     if let Some(ed) = edit {
-        // CF sub-menu — pick which field to edit
+        // CF sub-menu
         if let Some(sub) = ed.cf_sub {
-            if ed.editing {
-                let label = ["CF Email", "CF Token", "CF Zone ID"][sub as usize];
-                let mask = sub == 1;
-                let display = if mask && !ed.value.is_empty() { "●●●●●●●●".to_string() } else { ed.value.clone() };
-                f.render_widget(Paragraph::new(vec![
-                    Line::from(Span::styled(format!("  Editing: {} — type, Enter:save, Esc:cancel", label), Style::default().fg(Color::Yellow))),
-                    Line::from(Span::styled(format!("  ▶ {}", display), Style::default().fg(Color::Cyan))),
-                ]).block(Block::default().borders(Borders::ALL).title("Edit")), chunks[1]);
-                return;
-            }
             let cf_items: [(&str, String); 3] = [
                 ("CF Email", app_fmt(&app.settings.cf_email, "(not set)")),
                 ("CF Token", if app.settings.cf_token.is_some() { "●●●●●●●●".into() } else { "(not set)".into() }),
                 ("CF Zone ID", app_fmt(&app.settings.cf_zone_id, "(not set)")),
             ];
-            f.render_widget(Paragraph::new(
-                cf_items.iter().enumerate().map(|(i, (label, val))| {
-                    let hl = i == sub as usize;
-                    let s = if hl { Style::default().fg(Color::Black).bg(Color::Cyan) } else { Style::default() };
-                    Line::from(vec![Span::styled(if hl { format!(" ▶ {}: {}", label, val) } else { format!("   {}: {}", label, val) }, s)])
-                }).collect::<Vec<Line>>()
-            ).block(Block::default().borders(Borders::ALL).title("Cloudflare — ↑↓ select  Enter edit  Esc back")), chunks[1]);
+            let lines: Vec<Line> = cf_items.iter().enumerate().map(|(i, (label, val))| {
+                let hl = i == sub as usize;
+                let s = if hl { Style::default().fg(Color::Black).bg(Color::Cyan) } else { Style::default() };
+                Line::from(vec![Span::styled(if hl { format!(" ▶ {}: {}", label, val) } else { format!("   {}: {}", label, val) }, s)])
+            }).collect();
+            f.render_widget(Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Cloudflare — ↑↓ select  Enter edit  Esc back")), chunks[1]);
             return;
         }
-        // Regular field editing
+        // Editing any field
         if ed.editing {
-            let label = COMMANDS[ed.field].0;
-            let display = ed.value.clone();
+            let label = ["Xray binary path", "Config path", "", "Server IP", "State dir",
+                         "CF Email", "CF Token", "CF Zone ID"][ed.field];
+            let mask = ed.field == 6;
+            let display = if mask && !ed.value.is_empty() { "●●●●●●●●".to_string() } else { ed.value.clone() };
             f.render_widget(Paragraph::new(vec![
                 Line::from(Span::styled(format!("  Editing: {} — type, Enter:save, Esc:cancel", label), Style::default().fg(Color::Yellow))),
                 Line::from(Span::styled(format!("  ▶ {}", display), Style::default().fg(Color::Cyan))),
